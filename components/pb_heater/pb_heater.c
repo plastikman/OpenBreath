@@ -64,6 +64,12 @@ bool pb_heater_is_on(void) { return s_on; }
 
 void pb_heater_tick(void)
 {
+    // Heating-active indicator LED: steady ON while a chamber target is set and
+    // not safety-tripped (i.e. "heat mode on"), regardless of the momentary SSR
+    // cycling. TODO: confirm which physical button LED is the "heating" light
+    // (K1=GPIO6, K2=GPIO5, K3=GPIO4) and remap if needed.
+    gpio_set_level(PB_GPIO_LED_K1, (s_target_c > 0.0f && !s_latched_off) ? 1 : 0);
+
     // --- Safety cutoffs first, unconditionally ---
     float ptc_c = 0.0f, chamber_c = 0.0f;
     pb_ntc_status_t ps = pb_ntc_read(PB_NTC_PTC, &ptc_c);
