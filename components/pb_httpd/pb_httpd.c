@@ -56,6 +56,8 @@ esp_err_t pb_httpd_start(void)
 {
     httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
     cfg.lru_purge_enable = true;
+    cfg.uri_match_fn = httpd_uri_match_wildcard;   // lets pb_portal add a "/*" captive catch-all
+    cfg.max_uri_handlers = 12;                     // control API + portal + captive
     esp_err_t err = httpd_start(&s_server, &cfg);
     if (err != ESP_OK) return err;
 
@@ -68,3 +70,5 @@ esp_err_t pb_httpd_start(void)
     ESP_LOGI(TAG, "HTTP API up on :80 (GET /status, GET|POST /target?t=<C>)");
     return ESP_OK;
 }
+
+httpd_handle_t pb_httpd_handle(void) { return s_server; }

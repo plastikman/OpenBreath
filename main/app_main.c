@@ -23,10 +23,12 @@
 #include "pb_fan.h"
 #include "pb_policy.h"
 
+#include "esp_wifi.h"
 #include "pv_wifi.h"
 #include "pv_moonraker.h"
 
 #include "pb_httpd.h"
+#include "pb_portal.h"
 
 // Optional local dev config (gitignored): WiFi creds + Moonraker host. Without it
 // the build still works — the device just comes up without network credentials.
@@ -64,6 +66,14 @@ static void seed_dev_config(void)
 {
     nvs_handle_t h;
     if (nvs_open("app_nvs", NVS_READWRITE, &h) != ESP_OK) return;
+    // Only seed if not already provisioned — so captive-portal / user-entered
+    // creds always win over the dev default.
+    size_t sz = 0;
+    if (nvs_get_str(h, "ssid", NULL, &sz) == ESP_OK && sz > 1) {
+        nvs_close(h);
+        ESP_LOGI(TAG, "WiFi creds already in NVS; not seeding dev_config");
+        return;
+    }
 #ifdef OB_WIFI_SSID
     nvs_set_str(h, "ssid", OB_WIFI_SSID);
     nvs_set_str(h, "password", OB_WIFI_PASS);
@@ -132,8 +142,12 @@ void app_main(void)
     seed_dev_config();
 #endif
     ESP_ERROR_CHECK(pv_wifi_start());
+    // Mains-powered device: disable WiFi modem-sleep so the control API stays
+    // responsive (power-save adds ~0.5s latency spikes to incoming requests).
+    esp_wifi_set_ps(WIFI_PS_NONE);
     ESP_ERROR_CHECK(pv_moonraker_start());   // loads mk_host/mk_port from NVS, connects
     ESP_ERROR_CHECK(pb_httpd_start());       // HTTP control API (the Klipper module talks to this)
+    ESP_ERROR_CHECK(pb_portal_start());      // config + captive portal on the same server
     s_net_up = true;
-    ESP_LOGI(TAG, "networking up (wifi + moonraker + http api)");
+    ESP_LOGI(TAG, "networking up (wifi + moonraker + http api + portal)");
 }

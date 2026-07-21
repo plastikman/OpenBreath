@@ -12,5 +12,10 @@
 // heater latches off. Start after WiFi is up.
 #pragma once
 #include "esp_err.h"
+#include "esp_http_server.h"
 
 esp_err_t pb_httpd_start(void);
+
+// The shared HTTP server handle (valid after pb_httpd_start). pb_portal
+// registers its config/captive handlers on this same server. NULL if not started.
+httpd_handle_t pb_httpd_handle(void);
