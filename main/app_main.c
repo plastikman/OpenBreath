@@ -24,8 +24,18 @@ static void control_task(void *arg)
 {
     const TickType_t period = pdMS_TO_TICKS(PB_TICK_PERIOD_MS);
     TickType_t last = xTaskGetTickCount();
+    int dbg = 0;
     for (;;) {
         pb_policy_tick();
+        // Bring-up diagnostic: log smoothed temps every ~2s so we can validate
+        // the NTC path (Rref strap + room-temp sanity) on first flash.
+        if (++dbg >= 4) {
+            dbg = 0;
+            ESP_LOGI(TAG, "temps: chamber=%.1f C, ptc=%.1f C  (heater %s)",
+                     pb_ntc_smoothed_c(PB_NTC_CHAMBER),
+                     pb_ntc_smoothed_c(PB_NTC_PTC),
+                     pb_heater_is_on() ? "ON" : "off");
+        }
         vTaskDelayUntil(&last, period);
     }
 }

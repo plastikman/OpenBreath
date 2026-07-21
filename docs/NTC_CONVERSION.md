@@ -1,5 +1,13 @@
 # Panda Breath (ESP32-C3) — NTC ADC→Temperature conversion, fully reversed
 
+> **⚠️ HARDWARE CORRECTION (2026-07-21).** This report's `Vrail = 0.1 V` divider
+> constant is **wrong**. On real hardware the ADC pin sits ~1.6 V at ambient, so
+> the constant `K` in `Rntc = Rref·V/(K−V)` is the **~3.3 V supply**, not 0.1 V.
+> The report's *formula shape*, the 82/33 kΩ `Rref` strap, and the R/T table are
+> all correct — only the constant was misidentified. Validated on device: with
+> `K = 3.3 V` the chamber NTC read **33.0 °C**, matching the printer's extruder
+> thermistors (33.0 °C) exactly. The firmware uses `PB_VSUPPLY_V = 3.3f`.
+
 Target: chamber NTC (GPIO0 / ADC1_CH0) and PTC-element NTC (GPIO1 / ADC1_CH1).
 Both channels use the **identical** conversion. All float math is soft-float ROM
 libgcc (`__mulsf3`, `__subsf3`, `__divsf3`, `__floatsisf`, `__fixunssfsi`), verified

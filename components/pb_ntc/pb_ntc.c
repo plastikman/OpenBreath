@@ -12,8 +12,15 @@
 
 static const char *TAG = "pb_ntc";
 
-// Stock divider: Vrail = 0.1 V in the ADC voltage domain (DROM const 0x3dcccccd).
-#define PB_VRAIL_V        0.100000001f
+// Low-side NTC divider supply K in Rntc = Rref*V/(K-V) = the ~3.3 V rail.
+// (The RE report's 0.1 V was wrong; on hardware the pin sits ~1.6 V at ambient.)
+// HW check 2026-07-21: reads ~33 C while the room is 25-26 C, which is correct —
+// the chamber had been running at 65 C <1 h earlier, so residual heat in the
+// enclosure/heater mass keeps the sensor above room air (sensor != room temp).
+// So the standard 3.3 V rail is the right constant, no fudge factor. TODO: for a
+// rigorous absolute check, compare against a probe co-located with the NTC at a
+// steady drying temp.
+#define PB_VSUPPLY_V      3.3f
 // Raw-count fault thresholds (from stock fcn.4200ca8e).
 #define PB_RAW_OPEN_MAX   0xFFD   // raw > this => open / over-range
 #define PB_RAW_SHORT_MIN  0x14    // raw <= this => short / under-range
@@ -110,7 +117,7 @@ esp_err_t pb_ntc_init(void)
         s_win_idx[i] = 0;
     }
     s_ready = true;
-    ESP_LOGI(TAG, "init ok (Rref=%d kOhm, Vrail=%.3f V)", s_rref_kohm, PB_VRAIL_V);
+    ESP_LOGI(TAG, "init ok (Rref=%d kOhm, Vsupply=%.2f V)", s_rref_kohm, PB_VSUPPLY_V);
     return ESP_OK;
 }
 
@@ -120,15 +127,17 @@ pb_ntc_status_t pb_ntc_read(pb_ntc_channel_t ch, float *out_c)
 
     int raw = 0;
     if (adc_oneshot_read(s_adc, s_chan[ch], &raw) != ESP_OK) return PB_NTC_UNINIT;
-    if (raw > PB_RAW_OPEN_MAX)  return PB_NTC_OPEN;
-    if (raw <= PB_RAW_SHORT_MIN) return PB_NTC_SHORT;
 
     int mv = 0;
     if (adc_cali_raw_to_voltage(s_cali[ch], raw, &mv) != ESP_OK) return PB_NTC_UNINIT;
-    float v = (float)mv / 1000.0f;               // volts at the pin
-    if (v <= 0.0f || v >= PB_VRAIL_V) return PB_NTC_OPEN;
 
-    float r_kohm = (float)s_rref_kohm * v / (PB_VRAIL_V - v);
+    if (raw > PB_RAW_OPEN_MAX)  return PB_NTC_OPEN;
+    if (raw <= PB_RAW_SHORT_MIN) return PB_NTC_SHORT;
+
+    float v = (float)mv / 1000.0f;               // volts at the pin
+    if (v <= 0.0f || v >= PB_VSUPPLY_V) return PB_NTC_OPEN;
+
+    float r_kohm = (float)s_rref_kohm * v / (PB_VSUPPLY_V - v);
     float t = rntc_to_temp_c(r_kohm);
     float smoothed = push_average(ch, t);
     if (out_c) *out_c = smoothed;
