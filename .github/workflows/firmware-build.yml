@@ -24,6 +24,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - name: Build (ESP-IDF v5.3)
         uses: espressif/esp-idf-ci-action@v1

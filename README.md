@@ -18,13 +18,20 @@ re-implemented.
 ## Status
 | Component | State |
 |---|---|
-| `pb_board` | ✅ Pinout (RE'd; INFERRED pins need continuity test) |
-| `pb_ntc` | ✅ Exact stock ADC→temp conversion (formula + 114-entry R/T table) |
-| `pb_heater` | 🟡 Bang-bang + full safety cutoffs; needs hardware validation |
-| `pb_fan` | 🟡 TRIAC phase-angle skeleton; ISR timing needs bench tuning |
+| `pb_board` | ✅ Pinout RE'd; boots on hardware (INFERRED pins to continuity-test) |
+| `pb_ntc` | ✅ Stock conversion ported; **hardware-validated** (reads 33.0 °C = printer extruders) |
+| `pb_heater` | 🟡 Bang-bang + full safety cutoffs; SSR pin confirmed, needs load validation |
+| `pb_fan` | 🟡 TRIAC phase-angle, proven zero-cross model (**never PWM**); stock values being finalized |
 | `pb_policy` | 🟡 Thin glue stub |
-| WiFi / portal / Moonraker | ⬜ To import from the OpenVent shared core |
-| Flashing / partitions | ⬜ Strategy TBD (see `partitions.csv`) |
+| Network core: `pv_wifi` / `pv_evlog` / `pv_moonraker` | 🔗 Referenced from OpenVent (submodule; available, not yet wired) |
+| Portal / status LED / buttons | ⬜ Breath-local — device-specific, **not** part of the shared core |
+| Flashing / partitions | 🟡 Flashes + boots; restore-to-stock documented, partition strategy TBD |
+
+**Shared-core boundary:** board-agnostic infrastructure (WiFi, event log, Moonraker
+client) is referenced from the [OpenVent](https://github.com/justinh-rahb/OpenVent)
+family via `external/OpenVent` (git submodule) + `EXTRA_COMPONENT_DIRS`. Everything
+device-specific — the board map, sensors, heater/fan actuation, and the portal /
+LED / button UI — stays in this repo.
 
 ## Hardware
 ESP32-C3-MINI-1, mains PSU, PTC heater via SSR (GPIO18), ~220 VAC blower via
