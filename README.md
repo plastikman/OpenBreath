@@ -29,7 +29,7 @@ re-implemented.
 | Network core: `pv_wifi` / `pv_evlog` / `pv_moonraker` | ✅ Referenced from OpenVent (submodule); WiFi + Moonraker validated on hardware |
 | Portal / status dashboard / heat LED | ✅ Breath-local; captive-portal provisioning + live dashboard validated |
 | HTTP control API (`pb_httpd`) | ✅ `/status` `/target` `/heartbeat` `/reset`; CSRF-gated mutations |
-| Klipper-side helper (M141 / Fluidd) | 🟡 Talks to the HTTP API; next build |
+| Klipper-side helper (M141 / Fluidd) | ✅ [openbreath-klipper](https://github.com/plastikman/openbreath-klipper) — HTTP transport, M141/M191, Fluidd chamber card |
 | Flasher (`tools/flash.py`) | ✅ Backs up full stock flash first, then flashes; `--restore` returns to stock |
 | Web OTA update | ✅ Dual-OTA + rollback; upload from the UI, verified on hardware (OpenBreath-only, refused while heating) |
 
@@ -38,6 +38,17 @@ client) is referenced from the [OpenVent](https://github.com/justinh-rahb/OpenVe
 family via `external/OpenVent` (git submodule) + `EXTRA_COMPONENT_DIRS`. Everything
 device-specific — the board map, sensors, heater/fan actuation, and the portal /
 LED / button UI — stays in this repo.
+
+## Screenshots
+<p>
+<img src="docs/screenshots/dashboard.png" width="250" alt="Live status dashboard">
+<img src="docs/screenshots/setup.png" width="250" alt="Wi-Fi / printer setup">
+<img src="docs/screenshots/firmware-update.png" width="250" alt="OTA firmware update">
+</p>
+
+Left → right: the live status dashboard, Wi-Fi / printer setup (captive portal),
+and the OpenBreath-only OTA firmware-update page. Served by the device itself over
+plain HTTP on your LAN.
 
 ## Hardware
 ESP32-C3-MINI-1, mains PSU, PTC heater via SSR (GPIO18), ~220 VAC blower switched
