@@ -73,3 +73,7 @@ docs/          hardware map, safety model, NTC RE report
 ## Credits
 Hardware + firmware reverse-engineering builds on the BTT Panda Breath work in
 `klipper-esp32` (Justin Hayes) and the OpenVent architecture. MIT licensed.
+
+## Support
+If OpenBreath is useful to you, you can support development here:
+[☕ Buy me a coffee](https://buymeacoffee.com/plastikman)
