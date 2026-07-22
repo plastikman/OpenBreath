@@ -27,6 +27,7 @@ Tested against a V1.0.1 board — verify your board revision first.
 """
 import argparse
 import datetime
+import hashlib
 import os
 import subprocess
 import sys
@@ -75,6 +76,14 @@ def confirm(prompt):
         return False
 
 
+def sha256_file(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
 def do_backup(port, baud, backup_dir):
     os.makedirs(backup_dir, exist_ok=True)
     stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -85,11 +94,29 @@ def do_backup(port, baud, backup_dir):
     if rc != 0:
         print("ERROR: backup read failed — NOT flashing. Fix the connection and retry.")
         return None
+
+    # 1) exact size, 2) not a blank/failed read (real image starts with the ESP
+    # magic byte 0xE9), 3) contents actually match the chip (on-device hash via
+    # esptool verify_flash, not just the file size).
     size = os.path.getsize(path) if os.path.exists(path) else 0
     if size != FLASH_SIZE:
-        print(f"ERROR: backup is {size} bytes, expected {FLASH_SIZE}. NOT flashing.")
+        print(f"ERROR: backup is {size} bytes, expected exactly {FLASH_SIZE}. NOT flashing.")
         return None
-    print(f"      backup OK ({size} bytes). Keep this file safe — it restores stock.")
+    with open(path, "rb") as f:
+        magic = f.read(1)
+    if magic != b"\xe9":
+        print(f"ERROR: backup does not start with the ESP image magic (0xE9); got "
+              f"0x{magic.hex() or '??'}. The read looks blank/corrupt — NOT flashing.")
+        return None
+    print("      verifying backup against the chip (hash)...")
+    if run(esptool_cmd(port, baud, "verify_flash", "0x0", path)) != 0:
+        print("ERROR: backup failed hash verification against the chip — NOT flashing.")
+        return None
+
+    digest = sha256_file(path)
+    print(f"      backup OK: {size} bytes, verified.")
+    print(f"      SHA-256: {digest}")
+    print("      Keep this file safe — it is the ONLY way back to stock.")
     return path
 
 
@@ -102,7 +129,9 @@ def do_flash(port, baud, build_dir):
             print("       Build first:  idf.py set-target esp32c3 && idf.py build")
             return 1
         args += [offset, p]
+    app = os.path.join(build_dir, "openbreath.bin")
     print(f"\n[3/3] Flashing OpenBreath from {build_dir}")
+    print(f"      app image SHA-256: {sha256_file(app)}")
     return run(esptool_cmd(port, baud,
                            "--before", "default_reset", "--after", "hard_reset",
                            "write_flash", "--flash_mode", "dio",
@@ -114,13 +143,34 @@ def do_restore(port, baud, image):
         print(f"ERROR: backup image not found: {image}")
         return 1
     size = os.path.getsize(image)
-    print(f"\nRestoring full flash image {image} ({size} bytes) at offset 0x0")
+    # A full-chip restore must be exactly the flash size — a wrong-size file would
+    # write a truncated/misaligned image and brick the board.
+    if size != FLASH_SIZE:
+        print(f"ERROR: {image} is {size} bytes; a full restore must be exactly "
+              f"{FLASH_SIZE} bytes (4 MB). Refusing.")
+        return 1
+    with open(image, "rb") as f:
+        if f.read(1) != b"\xe9":
+            print("ERROR: image does not start with the ESP magic (0xE9) — not a "
+                  "valid full-flash image. Refusing.")
+            return 1
+    print(f"\nRestoring full flash image {image}")
+    print(f"  size: {size} bytes   SHA-256: {sha256_file(image)}")
     if not confirm("This OVERWRITES the entire chip. Continue?"):
         print("Aborted.")
         return 1
-    return run(esptool_cmd(port, baud,
-                           "--before", "default_reset", "--after", "hard_reset",
-                           "write_flash", "--flash_size", "detect", "0x0", image))
+    rc = run(esptool_cmd(port, baud,
+                         "--before", "default_reset", "--after", "hard_reset",
+                         "write_flash", "--flash_size", "detect", "0x0", image))
+    if rc != 0:
+        return rc
+    print("  verifying restored image against the chip (hash)...")
+    if run(esptool_cmd(port, baud, "verify_flash", "0x0", image)) != 0:
+        print("WARNING: post-restore verification FAILED — the chip may not match "
+              "the image. Re-run the restore.")
+        return 1
+    print("  restore verified OK.")
+    return 0
 
 
 def main():

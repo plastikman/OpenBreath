@@ -21,6 +21,21 @@ static const char *TAG = "pb_portal";
 // the chunked response early, so we must never send an empty chunk.
 #define SEND(req, s) do { const char *_s = (s); if (_s && _s[0]) httpd_resp_send_chunk((req), _s, HTTPD_RESP_USE_STRLEN); } while (0)
 
+// Shared client-side auth helpers, injected into every control page's <script>.
+// window.OB_TOK holds the CSRF sentinel ("web") ONLY when no control token is
+// configured. When a token IS configured the device sets window.OB_NEEDTOK
+// instead and never emits the secret — we prompt for it and cache it in
+// localStorage, so a configured token is genuine auth rather than a value baked
+// into this public page. On a 403 the cached token is dropped and re-prompted.
+#define OB_AUTH_JS \
+    "function tok(){if(window.OB_TOK)return window.OB_TOK;" \
+    "var t=localStorage.getItem('ob_tok');" \
+    "if(!t){t=prompt('OpenBreath control token')||'';if(t)localStorage.setItem('ob_tok',t);}" \
+    "return t;}" \
+    "function hdr(){return {'X-OpenBreath-Auth':tok()};}" \
+    "function post(u){return fetch(u,{method:'POST',headers:hdr()}).then(function(r){" \
+    "if(r.status==403){localStorage.removeItem('ob_tok');alert('Control token rejected \\u2014 try again.');}return r;});}"
+
 // ---- form parsing (application/x-www-form-urlencoded) ----
 static int hexval(char c)
 {
@@ -152,10 +167,11 @@ static const char STATUS_BODY[] =
     "<p style='text-align:center;margin-top:-6px'><small style='color:#6f6f6f'>"
     "Firmware update installs <b>OpenBreath</b> updates only \xE2\x80\x94 it does <b>not</b> "
     "restore the stock Panda firmware.</small></p></div>"
-    "<script>"
-    // OB_TOK is injected by status_page (the configured control token, or the
-    // "web" CSRF sentinel). Every mutating call carries it as X-OpenBreath-Auth.
-    "var HDR={'X-OpenBreath-Auth':(window.OB_TOK||'web')};"
+    "<script>" OB_AUTH_JS
+    // iOwn: did THIS tab start the current heat? We heartbeat ONLY then, so a
+    // passive or freshly-reloaded dashboard (iOwn=false) never pets the comms
+    // watchdog and therefore can't mask a Klippy/controller failure.
+    "var iOwn=false;"
     "function u(i,v){document.getElementById(i).textContent=v;}"
     "function refresh(){fetch('/status').then(function(r){return r.json();}).then(function(s){"
     "u('temp',s.temp==null?'--':s.temp.toFixed(1)+'\\u00b0C');"
@@ -165,17 +181,17 @@ static const char STATUS_BODY[] =
     "var ob=document.getElementById('off');var on=s.target>0;ob.disabled=!on;"
     "ob.style.background=on?'var(--accent)':'';ob.style.color=on?'#fff':'';ob.style.borderColor=on?'var(--accent)':'';"
     "u('cstat',s.chamber_status=='ok'?'':'sensor: '+s.chamber_status);"
-    // Heartbeat lease: while this dashboard is open AND a target is set, pet the
-    // comms watchdog so browser-started heat stays alive. Close the tab and the
-    // lease lapses -> the 5-min watchdog latches the heater off (fail-safe).
-    "if(s.target>0){fetch('/heartbeat',{method:'POST',headers:HDR}).catch(function(){});}"
+    "if(!(s.target>0))iOwn=false;"          // heat is off -> nobody's lease, incl. ours
+    // Heartbeat lease — only for heat THIS tab started. Close the tab (or never
+    // having started it) lets the 5-min watchdog latch the heater off (fail-safe).
+    "if(iOwn&&s.target>0){fetch('/heartbeat',{method:'POST',headers:hdr()}).catch(function(){});}"
     "var f=document.getElementById('fault'),rb=document.getElementById('rst');"
     "if(s.fault){f.style.display='block';f.textContent='\\u26a0 Fault: '+(s.fault_reason||'')+' (fix, then Clear fault)';rb.style.display='block';}"
     "else{f.style.display='none';rb.style.display='none';}"
     "}).catch(function(){});}"
-    "function setT(){var v=document.getElementById('tin').value;fetch('/target?t='+encodeURIComponent(v),{method:'POST',headers:HDR}).then(refresh);}"
-    "function setOff(){fetch('/target?t=0',{method:'POST',headers:HDR}).then(refresh);}"
-    "function doReset(){fetch('/reset',{method:'POST',headers:HDR}).then(refresh);}"
+    "function setT(){var v=document.getElementById('tin').value;iOwn=true;post('/target?t='+encodeURIComponent(v)).then(refresh);}"
+    "function setOff(){iOwn=false;post('/target?t=0').then(refresh);}"
+    "function doReset(){post('/reset').then(refresh);}"
     "refresh();setInterval(refresh,2000);"
     "</script></body></html>";
 
@@ -193,23 +209,25 @@ static const char FW_BODY[] =
     "<label>OpenBreath firmware (.bin)</label>"
     "<input type=file id=fw accept='.bin' onchange='fwsel()'>"
     "<button type=button id=fwbtn class=go onclick='doUpdate()' disabled>Upload &amp; flash</button>"
-    "<div id=fwmsg style='margin-top:.6em'><small>Turn the heater OFF first "
+    "<div id=fwmsg style='margin-top:.6em;word-break:break-all'><small>Turn the heater OFF first "
     "(updates are refused while heating). Do not power off during the update.</small></div></div>"
     "<p style='text-align:center'><small><a href='/'>\xE2\x86\x90 Back to status</a></small></p></div>"
-    "<script>"
+    "<script>" OB_AUTH_JS
     // Enable the flash button only once a file is chosen.
     "function fwsel(){document.getElementById('fwbtn').disabled=!document.getElementById('fw').files.length;}"
-    // Stream the chosen .bin to /update with the auth header; device validates +
-    // reboots into it. A dropped connection on .catch is the expected reboot path.
+    // Stream the chosen .bin to /update with the auth header; device validates,
+    // reports the SHA-256 it computed over the received image, and reboots. A
+    // dropped connection on .catch is the expected reboot path.
     "function doUpdate(){var f=document.getElementById('fw').files[0];"
     "var m=document.getElementById('fwmsg');"
     "if(!f){m.innerHTML='<small>Choose a .bin file first.</small>';return;}"
     "m.innerHTML='<small>Uploading &amp; flashing\\u2026 do not power off.</small>';"
-    "fetch('/update',{method:'POST',headers:{'X-OpenBreath-Auth':(window.OB_TOK||'web')},body:f})"
+    "fetch('/update',{method:'POST',headers:hdr(),body:f})"
     ".then(function(r){return r.json().then(function(j){return {s:r.status,j:j};})"
     ".catch(function(){return {s:r.status,j:{}};});})"
     ".then(function(x){if(x.j&&x.j.ok){m.innerHTML='<h3>Flashed \\u2713</h3>"
-    "<small>Rebooting into the new firmware\\u2026</small>';}"
+    "<small>SHA-256 of uploaded image:<br><code>'+(x.j.sha256||'?')+'</code><br>"
+    "Rebooting into the new firmware\\u2026</small>';}"
     "else{m.innerHTML='<small>Update failed: '+((x.j&&x.j.error)||('HTTP '+x.s))+'</small>';}})"
     ".catch(function(){m.innerHTML='<small>Connection lost \\u2014 if it was flashing, "
     "the device is rebooting into the new firmware.</small>';});}"
@@ -219,7 +237,7 @@ static const char PAGE_TAIL[] =
     "<button type=submit class=go>Save &amp; Connect</button></form>"
     "<div id=msg style='text-align:center'><small>The device reboots and joins your network after saving.</small></div>"
     "<p style='text-align:center'><small><a href='/fw'>Firmware update</a></small></p></div>"
-    "<script>"
+    "<script>" OB_AUTH_JS
     // Submit via fetch so we can attach the X-OpenBreath-Auth header (a plain form
     // POST can't). Required in STA /setup (the /save handler gates on it there);
     // harmless in AP mode. The device reboots on save, so a dropped connection on
@@ -228,8 +246,8 @@ static const char PAGE_TAIL[] =
     "var b=new URLSearchParams(new FormData(document.getElementById('cfg'))).toString();"
     "var done=function(){document.getElementById('msg').innerHTML="
     "'<h3>Saved \\u2713</h3><small>Rebooting and joining your Wi-Fi\\u2026 this page will disconnect.</small>';};"
-    "fetch('/save',{method:'POST',headers:{'X-OpenBreath-Auth':(window.OB_TOK||'web'),"
-    "'Content-Type':'application/x-www-form-urlencoded'},body:b}).then(done).catch(done);"
+    "var h=hdr();h['Content-Type']='application/x-www-form-urlencoded';"
+    "fetch('/save',{method:'POST',headers:h,body:b}).then(done).catch(done);"
     "return false;}"
     "function togglePw(){var p=document.getElementById('pw'),e=document.getElementById('eye');"
     "var s=p.type==='password';p.type=s?'text':'password';e.textContent=s?'\xF0\x9F\x99\x88':'\xF0\x9F\x91\x81';}"
@@ -242,55 +260,35 @@ static const char PAGE_TAIL[] =
     "load();setInterval(load,4000);"
     "</script></body></html>";
 
-// Escape a string for embedding inside a JS double-quoted string literal.
-static void js_str_escape(const char *in, char *out, size_t outsz)
+// Inject the client-side auth bootstrap. If a control token is configured we emit
+// only a NEEDTOK flag (never the secret) so the page prompts for it; otherwise we
+// emit the "web" CSRF sentinel. Paired with OB_AUTH_JS's tok()/hdr().
+static void send_auth_inject(httpd_req_t *req)
 {
-    size_t o = 0;
-    for (const char *p = in; *p && o + 2 < outsz; p++) {
-        unsigned char c = (unsigned char)*p;
-        if (c == '"' || c == '\\') { out[o++] = '\\'; out[o++] = (char)c; }
-        else if (c < 0x20) { continue; }          // drop control chars
-        else out[o++] = (char)c;
-    }
-    out[o] = '\0';
+    char tok[65];
+    pb_httpd_ctl_token(tok, sizeof tok);   // 65-byte buffer: never false-negative
+    SEND(req, tok[0]
+        ? "<script>window.OB_NEEDTOK=1;</script>"
+        : "<script>window.OB_TOK=\"web\";</script>");
 }
 
 // ---- handlers ----
-// Live status dashboard (root in STA mode). Injects the control token (or the
-// "web" CSRF sentinel) as window.OB_TOK so the same-origin dashboard's own
-// fetch()es carry a valid X-OpenBreath-Auth header.
+// Live status dashboard (root in STA mode).
 static esp_err_t status_page(httpd_req_t *req)
 {
-    char tok[65];
-    pb_httpd_ctl_token(tok, sizeof tok);
-    if (!tok[0]) { tok[0] = 'w'; tok[1] = 'e'; tok[2] = 'b'; tok[3] = '\0'; }
-    char esc[132];
-    js_str_escape(tok, esc, sizeof esc);
-    char tokjs[240];
-    snprintf(tokjs, sizeof tokjs, "<script>window.OB_TOK=\"%s\";</script>", esc);
-
     httpd_resp_set_type(req, "text/html; charset=utf-8");
     SEND(req, PAGE_HEAD);
-    SEND(req, tokjs);
+    send_auth_inject(req);
     SEND(req, STATUS_BODY);
     return httpd_resp_send_chunk(req, NULL, 0);
 }
 
-// Dedicated firmware-update page (GET /fw). Injects the control token like the
-// dashboard so its /update upload carries a valid X-OpenBreath-Auth header.
+// Dedicated firmware-update page (GET /fw).
 static esp_err_t fw_page(httpd_req_t *req)
 {
-    char tok[65];
-    pb_httpd_ctl_token(tok, sizeof tok);
-    if (!tok[0]) { tok[0] = 'w'; tok[1] = 'e'; tok[2] = 'b'; tok[3] = '\0'; }
-    char esc[132];
-    js_str_escape(tok, esc, sizeof esc);
-    char tokjs[240];
-    snprintf(tokjs, sizeof tokjs, "<script>window.OB_TOK=\"%s\";</script>", esc);
-
     httpd_resp_set_type(req, "text/html; charset=utf-8");
     SEND(req, PAGE_HEAD);
-    SEND(req, tokjs);
+    send_auth_inject(req);
     SEND(req, FW_BODY);
     return httpd_resp_send_chunk(req, NULL, 0);
 }
@@ -308,17 +306,9 @@ static esp_err_t config_page(httpd_req_t *req)
         nvs_close(h);
     }
 
-    char tok[65];
-    pb_httpd_ctl_token(tok, sizeof tok);
-    if (!tok[0]) { tok[0] = 'w'; tok[1] = 'e'; tok[2] = 'b'; tok[3] = '\0'; }
-    char esc[132];
-    js_str_escape(tok, esc, sizeof esc);
-    char tokjs[240];
-    snprintf(tokjs, sizeof tokjs, "<script>window.OB_TOK=\"%s\";</script>", esc);
-
     httpd_resp_set_type(req, "text/html; charset=utf-8");
     SEND(req, PAGE_HEAD);
-    SEND(req, tokjs);
+    send_auth_inject(req);
     SEND(req, CONFIG_WIFI);
 
     // Moonraker card — values embedded so we never emit an empty chunk. mk_host

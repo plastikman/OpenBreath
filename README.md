@@ -135,4 +135,5 @@ this project's `klipper-esp32` history and the OpenVent architecture
 
 ## Support
 If OpenBreath is useful to you, you can support development here:
-[☕ Buy me a coffee](https://buymeacoffee.com/plastikman)
+
+[![Buy Me A Coffee](https://www.buymeacoffee.com/assets/img/custom_images/orange_img.png)](https://buymeacoffee.com/plastikman)

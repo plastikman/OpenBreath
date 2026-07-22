@@ -19,6 +19,7 @@ static portMUX_TYPE s_mux = portMUX_INITIALIZER_UNLOCKED;
 
 static float       s_target_c;      // guarded by s_mux
 static bool        s_latched_off;   // guarded by s_mux (set by a safety trip)
+static bool        s_inhibited;     // guarded by s_mux (PERMANENT; reboot-only)
 static int64_t     s_last_link_us;  // guarded by s_mux
 static const char *s_fault_reason;  // guarded by s_mux (points at a string literal)
 static bool        s_on;            // written only by the control task; atomic read
@@ -62,8 +63,8 @@ esp_err_t pb_heater_set_target_c(float target_c)
 
     esp_err_t r = ESP_OK;
     taskENTER_CRITICAL(&s_mux);
-    if (s_latched_off && target_c > 0.0f) {
-        r = ESP_ERR_INVALID_STATE;       // never queue heat behind a fault latch
+    if ((s_latched_off || s_inhibited) && target_c > 0.0f) {
+        r = ESP_ERR_INVALID_STATE;       // never queue heat behind a fault/inhibit
     } else {
         s_target_c = target_c;
     }
@@ -106,6 +107,12 @@ void pb_heater_emergency_off(const char *reason)   // control-task context
 void pb_heater_clear_fault(void)
 {
     taskENTER_CRITICAL(&s_mux);
+    // A permanent inhibit is NOT clearable — leave everything latched.
+    if (s_inhibited) {
+        taskEXIT_CRITICAL(&s_mux);
+        ESP_LOGW(TAG, "clear ignored: heater permanently inhibited (reboot required)");
+        return;
+    }
     bool was = s_latched_off;
     s_latched_off = false;
     s_target_c = 0.0f;          // reset leaves the target at ZERO — a fresh
@@ -114,7 +121,20 @@ void pb_heater_clear_fault(void)
     if (was) ESP_LOGW(TAG, "fault latch cleared; target reset to 0 (send a fresh target to resume)");
 }
 
-bool pb_heater_is_faulted(void) { return s_latched_off; }   // atomic bool read
+void pb_heater_inhibit(const char *reason)
+{
+    ssr_set(false);
+    taskENTER_CRITICAL(&s_mux);
+    s_inhibited = true;
+    s_latched_off = true;
+    s_target_c = 0.0f;
+    s_fault_reason = reason ? reason : "inhibited";
+    taskEXIT_CRITICAL(&s_mux);
+    ESP_LOGE(TAG, "HEATER INHIBITED (reboot-only): %s", reason ? reason : "(unspecified)");
+}
+
+bool pb_heater_is_inhibited(void) { return s_inhibited; }   // atomic bool read
+bool pb_heater_is_faulted(void) { return s_latched_off || s_inhibited; }
 bool pb_heater_is_on(void) { return s_on; }                 // atomic bool read
 
 const char *pb_heater_fault_reason(void)

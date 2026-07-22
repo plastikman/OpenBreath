@@ -49,7 +49,18 @@ void pb_heater_emergency_off(const char *reason);
 // Explicitly clear a latched safety fault (over-temp / sensor fault / comms loss).
 // Setting a new target does NOT auto-clear it — this is a deliberate reset. The
 // next tick re-evaluates safety and re-latches if the fault still holds.
+// A permanent inhibit (pb_heater_inhibit) is NOT cleared by this.
 void pb_heater_clear_fault(void);
+
+// PERMANENT inhibit: force the heater off and refuse all heat until reboot. Unlike
+// a latched fault this is NOT clearable by pb_heater_clear_fault()/POST /reset —
+// only a power cycle lifts it. Use for conditions under which the heater must
+// never run again this boot (e.g. the control-loop watchdog could not be armed,
+// so a hung loop would go undetected). Reports as a fault in /status.
+void pb_heater_inhibit(const char *reason);
+
+// True once pb_heater_inhibit() has been called (reboot-only).
+bool pb_heater_is_inhibited(void);
 
 // True if a safety trip has latched the heater off (needs an explicit clear).
 bool pb_heater_is_faulted(void);

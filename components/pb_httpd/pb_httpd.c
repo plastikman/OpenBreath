@@ -8,9 +8,11 @@
 #include "cJSON.h"
 #include "nvs.h"
 #include "esp_ota_ops.h"
+#include "esp_app_desc.h"
 #include "esp_system.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "mbedtls/sha256.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -204,6 +206,12 @@ static esp_err_t ota_fail(httpd_req_t *req, const char *status, esp_ota_handle_t
     return ESP_FAIL;
 }
 
+static void ota_reboot_task(void *arg)
+{
+    vTaskDelay(pdMS_TO_TICKS(1200));   // give the HTTP response time to flush
+    esp_restart();
+}
+
 static esp_err_t update_post(httpd_req_t *req)
 {
     if (auth_reject(req)) return ESP_OK;
@@ -220,32 +228,65 @@ static esp_err_t update_post(httpd_req_t *req)
         return ota_fail(req, "500 Internal Server Error", 0, "esp_ota_begin failed");
     ESP_LOGW(TAG, "OTA: receiving new image into %s", part->label);
 
+    // Hash the received bytes so the operator can confirm what was flashed.
+    mbedtls_sha256_context sha;
+    mbedtls_sha256_init(&sha);
+    mbedtls_sha256_starts(&sha, 0);   // 0 = SHA-256
+
     char buf[1024];
     int total = 0, r;
     while ((r = httpd_req_recv(req, buf, sizeof buf)) > 0) {
-        if (esp_ota_write(h, buf, r) != ESP_OK)
+        if (esp_ota_write(h, buf, r) != ESP_OK) {
+            mbedtls_sha256_free(&sha);
             return ota_fail(req, "500 Internal Server Error", h, "flash write failed");
+        }
+        mbedtls_sha256_update(&sha, (const unsigned char *)buf, r);
         total += r;
     }
-    if (r < 0)      // recv error / timeout (r == 0 is a clean end of body)
+    if (r < 0) {    // recv error / timeout (r == 0 is a clean end of body)
+        mbedtls_sha256_free(&sha);
         return ota_fail(req, "400 Bad Request", h, "upload interrupted");
-    if (total == 0)
+    }
+    if (total == 0) {
+        mbedtls_sha256_free(&sha);
         return ota_fail(req, "400 Bad Request", h, "empty upload");
+    }
+
+    unsigned char digest[32];
+    mbedtls_sha256_finish(&sha, digest);
+    mbedtls_sha256_free(&sha);
+    char sha_hex[65];
+    for (int i = 0; i < 32; i++) snprintf(sha_hex + i * 2, 3, "%02x", digest[i]);
 
     esp_err_t err = esp_ota_end(h);   // validates the image (magic/size/checksum)
     if (err != ESP_OK)
         return ota_fail(req, "400 Bad Request", 0, "invalid firmware image");
+
+    // Identity check: only boot images that are actually OpenBreath — reject any
+    // other (even a valid ESP32-C3) app. The app descriptor's project_name comes
+    // from CMake project(openbreath).
+    esp_app_desc_t desc;
+    if (esp_ota_get_partition_description(part, &desc) != ESP_OK)
+        return ota_fail(req, "400 Bad Request", 0, "cannot read image descriptor");
+    if (strcmp(desc.project_name, "openbreath") != 0) {
+        ESP_LOGE(TAG, "OTA rejected: project_name='%s' (not openbreath)", desc.project_name);
+        return ota_fail(req, "400 Bad Request", 0, "not an OpenBreath image");
+    }
+
     if (esp_ota_set_boot_partition(part) != ESP_OK)
         return ota_fail(req, "500 Internal Server Error", 0, "set boot partition failed");
 
-    ESP_LOGW(TAG, "OTA: %d bytes written to %s; rebooting", total, part->label);
+    ESP_LOGW(TAG, "OTA: %d bytes -> %s, sha256=%s, ver=%s; rebooting shortly",
+             total, part->label, sha_hex, desc.version);
     httpd_resp_set_type(req, "application/json");
-    char b[64];
-    snprintf(b, sizeof b, "{\"ok\":true,\"bytes\":%d}", total);
+    char b[160];
+    snprintf(b, sizeof b, "{\"ok\":true,\"bytes\":%d,\"sha256\":\"%s\"}", total, sha_hex);
     httpd_resp_sendstr(req, b);
-    vTaskDelay(pdMS_TO_TICKS(600));   // let the response flush before we reboot
-    esp_restart();
-    return ESP_OK;                    // unreachable
+    // Reboot from a separate task so this handler can RETURN first: httpd then
+    // closes the connection cleanly and the client reliably receives the full
+    // JSON (incl. the SHA) before esp_restart() tears the socket down.
+    xTaskCreate(ota_reboot_task, "ob_ota_reboot", 2048, NULL, 5, NULL);
+    return ESP_OK;
 }
 
 esp_err_t pb_httpd_start(void)
@@ -254,6 +295,10 @@ esp_err_t pb_httpd_start(void)
     cfg.lru_purge_enable = true;
     cfg.uri_match_fn = httpd_uri_match_wildcard;   // lets pb_portal add a "/*" captive catch-all
     cfg.max_uri_handlers = 12;                     // control API + portal + captive
+    // The OTA handler hashes the image (mbedtls) with a 1 KB read buffer + the
+    // app descriptor on-stack, which overflows the 4 KB default httpd task stack
+    // (stack-protection panic). Give it headroom.
+    cfg.stack_size = 8192;
     esp_err_t err = httpd_start(&s_server, &cfg);
     if (err != ESP_OK) return err;
 
