@@ -37,9 +37,17 @@ void pb_heater_notify_link_alive(void);
 // all safety cutoffs, and drives the SSR with hysteresis around the set-point.
 void pb_heater_tick(void);
 
-// Immediate, latching shutoff. Clears the target; heat stays off until a new
-// target is set AND all safety conditions are clear.
+// Immediate, latching shutoff. Clears the target and latches off. Heat stays off
+// until pb_heater_clear_fault() is called AND the condition has cleared.
 void pb_heater_emergency_off(const char *reason);
+
+// Explicitly clear a latched safety fault (over-temp / sensor fault / comms loss).
+// Setting a new target does NOT auto-clear it — this is a deliberate reset. The
+// next tick re-evaluates safety and re-latches if the fault still holds.
+void pb_heater_clear_fault(void);
+
+// True if a safety trip has latched the heater off (needs an explicit clear).
+bool pb_heater_is_faulted(void);
 
 // True if the SSR is currently commanded on.
 bool pb_heater_is_on(void);

@@ -12,20 +12,41 @@
 static const char *TAG = "pb_httpd";
 static httpd_handle_t s_server;
 
+// Read-only. Deliberately has NO side effects — monitoring (a dashboard, a
+// browser) must never keep the heater alive. Liveness is a separate explicit
+// POST /heartbeat, so losing the controller trips the comms watchdog.
 static esp_err_t status_get(httpd_req_t *req)
 {
-    pb_heater_notify_link_alive();   // a controller poll = link alive (feeds watchdog)
-    char buf[192];
+    char buf[224];
     int n = snprintf(buf, sizeof buf,
-        "{\"temp\":%.1f,\"ptc\":%.1f,\"target\":%.1f,\"heating\":%s,\"max\":%.0f}",
+        "{\"temp\":%.1f,\"ptc\":%.1f,\"target\":%.1f,\"heating\":%s,\"fault\":%s,\"max\":%.0f}",
         pb_ntc_smoothed_c(PB_NTC_CHAMBER), pb_ntc_smoothed_c(PB_NTC_PTC),
         pb_heater_get_target_c(), pb_heater_is_on() ? "true" : "false",
-        (double)PB_HEATER_MAX_TARGET_C);
+        pb_heater_is_faulted() ? "true" : "false", (double)PB_HEATER_MAX_TARGET_C);
     httpd_resp_set_type(req, "application/json");
     return httpd_resp_send(req, buf, n);
 }
 
-// GET or POST /target?t=<celsius>  (0 = off). Falls back to a plain-number body.
+// Explicit controller liveness. The controller must POST this regularly while it
+// wants heat; if it stops, the heater comms-watchdog latches off.
+static esp_err_t heartbeat_post(httpd_req_t *req)
+{
+    pb_heater_notify_link_alive();
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_sendstr(req, "{\"ok\":true}");
+}
+
+// Explicit safety-fault reset (over-temp / sensor / comms). POST-only.
+static esp_err_t reset_post(httpd_req_t *req)
+{
+    pb_heater_clear_fault();
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_sendstr(req, "{\"ok\":true}");
+}
+
+// POST /target?t=<celsius>  (0 = off). POST-only so a stray GET (browser prefetch,
+// crawler, link) can never energize the heater. A target command also counts as
+// liveness. Falls back to a plain-number body if no query.
 static esp_err_t target_set(httpd_req_t *req)
 {
     float t = -1.0f;
@@ -61,13 +82,15 @@ esp_err_t pb_httpd_start(void)
     esp_err_t err = httpd_start(&s_server, &cfg);
     if (err != ESP_OK) return err;
 
-    httpd_uri_t status = { .uri = "/status", .method = HTTP_GET,  .handler = status_get };
-    httpd_uri_t tgt_p  = { .uri = "/target", .method = HTTP_POST, .handler = target_set };
-    httpd_uri_t tgt_g  = { .uri = "/target", .method = HTTP_GET,  .handler = target_set };
+    httpd_uri_t status = { .uri = "/status",    .method = HTTP_GET,  .handler = status_get };
+    httpd_uri_t tgt    = { .uri = "/target",    .method = HTTP_POST, .handler = target_set };
+    httpd_uri_t hb     = { .uri = "/heartbeat", .method = HTTP_POST, .handler = heartbeat_post };
+    httpd_uri_t rst    = { .uri = "/reset",     .method = HTTP_POST, .handler = reset_post };
     httpd_register_uri_handler(s_server, &status);
-    httpd_register_uri_handler(s_server, &tgt_p);
-    httpd_register_uri_handler(s_server, &tgt_g);
-    ESP_LOGI(TAG, "HTTP API up on :80 (GET /status, GET|POST /target?t=<C>)");
+    httpd_register_uri_handler(s_server, &tgt);
+    httpd_register_uri_handler(s_server, &hb);
+    httpd_register_uri_handler(s_server, &rst);
+    ESP_LOGI(TAG, "HTTP API up :80 (GET /status; POST /target?t=<C>, /heartbeat, /reset)");
     return ESP_OK;
 }
 

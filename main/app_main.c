@@ -13,6 +13,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_log.h"
+#include "esp_task_wdt.h"
 #include "nvs_flash.h"
 #include "nvs.h"
 #include <stdbool.h>
@@ -53,17 +54,23 @@ static volatile bool s_net_up = false;
 // until pv_wifi is made configurable upstream.)
 static void brand_ap(void)
 {
+    nvs_handle_t h;
+    if (nvs_open("app_nvs", NVS_READWRITE, &h) != ESP_OK) return;
+    // Only set the default once — don't rewrite NVS (flash wear) every boot, and
+    // don't clobber a user-customized AP name.
+    size_t sz = 0;
+    if (nvs_get_str(h, "ap_ssid", NULL, &sz) == ESP_OK && sz > 1) {
+        nvs_close(h);
+        return;
+    }
     uint8_t mac[6] = {0};
     esp_read_mac(mac, ESP_MAC_WIFI_SOFTAP);
     char ssid[33];
     snprintf(ssid, sizeof ssid, "OpenPanda_%02X%02X", mac[4], mac[5]);
-    nvs_handle_t h;
-    if (nvs_open("app_nvs", NVS_READWRITE, &h) == ESP_OK) {
-        nvs_set_str(h, "ap_ssid", ssid);
-        nvs_commit(h);
-        nvs_close(h);
-        ESP_LOGI(TAG, "AP SSID branded: %s", ssid);
-    }
+    nvs_set_str(h, "ap_ssid", ssid);
+    nvs_commit(h);
+    nvs_close(h);
+    ESP_LOGI(TAG, "AP SSID default set: %s", ssid);
 }
 
 static void nvs_init(void)
@@ -113,12 +120,18 @@ static void control_task(void *arg)
     const TickType_t period = pdMS_TO_TICKS(PB_TICK_PERIOD_MS);
     TickType_t last = xTaskGetTickCount();
     int dbg = 0;
+
+    // Subscribe this task to the task watchdog so a hung control loop panics
+    // (-> reboot -> heater off on boot) rather than silently stalling.
+    esp_task_wdt_add(NULL);
+
     for (;;) {
         // Safety/control loop: enforces every heater cutoff + fan-follows-heater.
         // The chamber setpoint is owned by the HTTP API (pb_httpd -> pb_heater),
         // and the comms watchdog is fed by controller polls in pb_httpd — so we
         // must NOT set the target here (that would clobber the HTTP-set value).
         pb_policy_tick();
+        esp_task_wdt_reset();   // successful loop iteration
 
         if (++dbg >= 4) {   // ~2 s
             dbg = 0;

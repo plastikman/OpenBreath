@@ -9,6 +9,7 @@
 #include "esp_wifi.h"
 #include "nvs.h"
 #include "lwip/inet.h"
+#include "cJSON.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -145,17 +146,21 @@ static esp_err_t scan_json(httpd_req_t *req)
     int n = pv_wifi_get_scan_results(recs, PV_WIFI_SCAN_MAX);
     if (n == 0 && !pv_wifi_is_scanning()) pv_wifi_scan_start();
 
-    httpd_resp_set_type(req, "application/json");
-    SEND(req, "[");
-    for (int i = 0; i < n; i++) {
-        // Skip SSIDs with a double-quote to keep the JSON valid (rare).
-        if (strchr((char *)recs[i].ssid, '"')) continue;
-        char item[80];
-        snprintf(item, sizeof item, "%s\"%s\"", i ? "," : "", (char *)recs[i].ssid);
-        SEND(req, item);
+    // cJSON handles comma placement and escaping (quotes/backslashes/control chars),
+    // so a skipped/odd SSID can't produce invalid JSON.
+    cJSON *arr = cJSON_CreateArray();
+    for (int i = 0; i < n && arr; i++) {
+        recs[i].ssid[sizeof recs[i].ssid - 1] = '\0';   // guarantee NUL-terminated
+        if (recs[i].ssid[0] == '\0') continue;
+        cJSON *s = cJSON_CreateString((const char *)recs[i].ssid);
+        if (s) cJSON_AddItemToArray(arr, s);
     }
-    SEND(req, "]");
-    return httpd_resp_send_chunk(req, NULL, 0);
+    char *out = arr ? cJSON_PrintUnformatted(arr) : NULL;
+    httpd_resp_set_type(req, "application/json");
+    esp_err_t r = httpd_resp_sendstr(req, out ? out : "[]");
+    if (out) cJSON_free(out);
+    cJSON_Delete(arr);
+    return r;
 }
 
 static esp_err_t rescan_post(httpd_req_t *req)

@@ -44,8 +44,10 @@ void pb_heater_set_target_c(float target_c)
     if (target_c < 0.0f) target_c = 0.0f;
     if (target_c > PB_HEATER_MAX_TARGET_C) target_c = PB_HEATER_MAX_TARGET_C;
     s_target_c = target_c;
-    if (target_c > 0.0f) s_latched_off = false;   // a new heat request re-arms
-    ESP_LOGI(TAG, "target set to %.1f C", s_target_c);
+    // NOTE: a new target does NOT clear a latched safety fault. Over-temp /
+    // sensor-fault / comms-loss trips require an explicit pb_heater_clear_fault().
+    ESP_LOGI(TAG, "target set to %.1f C%s", s_target_c,
+             s_latched_off ? " (still latched off by a safety fault)" : "");
 }
 
 float pb_heater_get_target_c(void) { return s_target_c; }
@@ -59,6 +61,15 @@ void pb_heater_emergency_off(const char *reason)
     s_latched_off = true;
     ESP_LOGW(TAG, "EMERGENCY OFF: %s", reason ? reason : "(unspecified)");
 }
+
+void pb_heater_clear_fault(void)
+{
+    if (s_latched_off)
+        ESP_LOGW(TAG, "safety fault latch cleared (will re-trip if condition persists)");
+    s_latched_off = false;   // next tick re-evaluates safety; a persistent fault re-latches
+}
+
+bool pb_heater_is_faulted(void) { return s_latched_off; }
 
 bool pb_heater_is_on(void) { return s_on; }
 
@@ -83,9 +94,17 @@ void pb_heater_tick(void)
         pb_heater_emergency_off("chamber over-temp");
         return;
     }
-    // A sensor fault while heating is a fail-closed condition.
-    if (s_on && (cs == PB_NTC_OPEN || cs == PB_NTC_SHORT)) {
+    // Sensor fault is fail-closed on EITHER thermistor whenever a target is armed
+    // — not just while the SSR happens to be on (it may be momentarily off at
+    // setpoint). A blind heater (dead chamber sensor) or an unmonitored element
+    // (dead PTC sensor) must latch off.
+    const bool armed = (s_target_c > 0.0f);
+    if (armed && (cs == PB_NTC_OPEN || cs == PB_NTC_SHORT)) {
         pb_heater_emergency_off("chamber sensor fault");
+        return;
+    }
+    if (armed && (ps == PB_NTC_OPEN || ps == PB_NTC_SHORT)) {
+        pb_heater_emergency_off("PTC sensor fault");
         return;
     }
     // Comms-loss watchdog (only relevant while trying to heat).
