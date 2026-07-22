@@ -147,7 +147,11 @@ static const char STATUS_BODY[] =
     "<button type=button class=go style='width:auto;margin:0;padding:12px 18px' onclick='setT()'>Set</button></div>"
     "<button type=button id=off class=sec onclick='setOff()' disabled>Turn heater off</button>"
     "<button type=button class=sec id=rst style='display:none' onclick='doReset()'>Clear fault</button></div>"
-    "<p style='text-align:center'><small><a href='/setup'>Wi-Fi / printer setup</a></small></p></div>"
+    "<p style='text-align:center'><small><a href='/setup'>Wi-Fi / printer setup</a>"
+    " &middot; <a href='/fw'>Firmware update</a></small></p>"
+    "<p style='text-align:center;margin-top:-6px'><small style='color:#6f6f6f'>"
+    "Firmware update installs <b>OpenBreath</b> updates only \xE2\x80\x94 it does <b>not</b> "
+    "restore the stock Panda firmware.</small></p></div>"
     "<script>"
     // OB_TOK is injected by status_page (the configured control token, or the
     // "web" CSRF sentinel). Every mutating call carries it as X-OpenBreath-Auth.
@@ -175,9 +179,46 @@ static const char STATUS_BODY[] =
     "refresh();setInterval(refresh,2000);"
     "</script></body></html>";
 
+// Dedicated firmware-update page (GET /fw) — OpenBreath OTA only, its own page so
+// it isn't mixed in with Wi-Fi/printer setup.
+static const char FW_BODY[] =
+    "<div class=card><h2>Firmware update</h2>"
+    "<p style='margin:.2em 0 .7em;font-size:.85rem;color:#bdbdbd'>Installs an "
+    "<b>OpenBreath</b> firmware update (upload <code>openbreath.bin</code>). The "
+    "image is verified and the device reboots into it; a bad image rolls back on "
+    "the next boot.</p>"
+    "<div class=card style='background:#3a2f1f;color:#ffe0b0;font-size:.8rem'>"
+    "\xE2\x9A\xA0 This does <b>not</b> restore the stock Panda firmware. To go back to "
+    "stock, reflash your saved backup over USB with <code>tools/flash.py --restore</code>.</div>"
+    "<label>OpenBreath firmware (.bin)</label>"
+    "<input type=file id=fw accept='.bin' onchange='fwsel()'>"
+    "<button type=button id=fwbtn class=go onclick='doUpdate()' disabled>Upload &amp; flash</button>"
+    "<div id=fwmsg style='margin-top:.6em'><small>Turn the heater OFF first "
+    "(updates are refused while heating). Do not power off during the update.</small></div></div>"
+    "<p style='text-align:center'><small><a href='/'>\xE2\x86\x90 Back to status</a></small></p></div>"
+    "<script>"
+    // Enable the flash button only once a file is chosen.
+    "function fwsel(){document.getElementById('fwbtn').disabled=!document.getElementById('fw').files.length;}"
+    // Stream the chosen .bin to /update with the auth header; device validates +
+    // reboots into it. A dropped connection on .catch is the expected reboot path.
+    "function doUpdate(){var f=document.getElementById('fw').files[0];"
+    "var m=document.getElementById('fwmsg');"
+    "if(!f){m.innerHTML='<small>Choose a .bin file first.</small>';return;}"
+    "m.innerHTML='<small>Uploading &amp; flashing\\u2026 do not power off.</small>';"
+    "fetch('/update',{method:'POST',headers:{'X-OpenBreath-Auth':(window.OB_TOK||'web')},body:f})"
+    ".then(function(r){return r.json().then(function(j){return {s:r.status,j:j};})"
+    ".catch(function(){return {s:r.status,j:{}};});})"
+    ".then(function(x){if(x.j&&x.j.ok){m.innerHTML='<h3>Flashed \\u2713</h3>"
+    "<small>Rebooting into the new firmware\\u2026</small>';}"
+    "else{m.innerHTML='<small>Update failed: '+((x.j&&x.j.error)||('HTTP '+x.s))+'</small>';}})"
+    ".catch(function(){m.innerHTML='<small>Connection lost \\u2014 if it was flashing, "
+    "the device is rebooting into the new firmware.</small>';});}"
+    "</script></body></html>";
+
 static const char PAGE_TAIL[] =
     "<button type=submit class=go>Save &amp; Connect</button></form>"
-    "<div id=msg style='text-align:center'><small>The device reboots and joins your network after saving.</small></div></div>"
+    "<div id=msg style='text-align:center'><small>The device reboots and joins your network after saving.</small></div>"
+    "<p style='text-align:center'><small><a href='/fw'>Firmware update</a></small></p></div>"
     "<script>"
     // Submit via fetch so we can attach the X-OpenBreath-Auth header (a plain form
     // POST can't). Required in STA /setup (the /save handler gates on it there);
@@ -232,6 +273,25 @@ static esp_err_t status_page(httpd_req_t *req)
     SEND(req, PAGE_HEAD);
     SEND(req, tokjs);
     SEND(req, STATUS_BODY);
+    return httpd_resp_send_chunk(req, NULL, 0);
+}
+
+// Dedicated firmware-update page (GET /fw). Injects the control token like the
+// dashboard so its /update upload carries a valid X-OpenBreath-Auth header.
+static esp_err_t fw_page(httpd_req_t *req)
+{
+    char tok[65];
+    pb_httpd_ctl_token(tok, sizeof tok);
+    if (!tok[0]) { tok[0] = 'w'; tok[1] = 'e'; tok[2] = 'b'; tok[3] = '\0'; }
+    char esc[132];
+    js_str_escape(tok, esc, sizeof esc);
+    char tokjs[240];
+    snprintf(tokjs, sizeof tokjs, "<script>window.OB_TOK=\"%s\";</script>", esc);
+
+    httpd_resp_set_type(req, "text/html; charset=utf-8");
+    SEND(req, PAGE_HEAD);
+    SEND(req, tokjs);
+    SEND(req, FW_BODY);
     return httpd_resp_send_chunk(req, NULL, 0);
 }
 
@@ -379,11 +439,13 @@ esp_err_t pb_portal_start(void)
     httpd_uri_t rescan = { .uri = "/rescan",    .method = HTTP_POST, .handler = rescan_post };
     httpd_uri_t scan   = { .uri = "/scan.json", .method = HTTP_GET,  .handler = scan_json };
     httpd_uri_t setup  = { .uri = "/setup",     .method = HTTP_GET,  .handler = config_page };
+    httpd_uri_t fw     = { .uri = "/fw",        .method = HTTP_GET,  .handler = fw_page };
     httpd_uri_t root   = { .uri = "/*",          .method = HTTP_GET,  .handler = root_page };
     httpd_register_uri_handler(s, &save);
     httpd_register_uri_handler(s, &rescan);
     httpd_register_uri_handler(s, &scan);
     httpd_register_uri_handler(s, &setup);
+    httpd_register_uri_handler(s, &fw);
     httpd_register_uri_handler(s, &root);   // catch-all LAST (captive-portal probes)
 
     if (pv_wifi_state() == PV_WIFI_STATE_AP_PORTAL) {

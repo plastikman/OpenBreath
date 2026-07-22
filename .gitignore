@@ -18,3 +18,6 @@ __pycache__/
 # Local dev secrets (WiFi creds etc.) — never commit
 main/dev_config.h
 main/dev_config.h.local
+
+# stock flash backups written by tools/flash.py
+backups/

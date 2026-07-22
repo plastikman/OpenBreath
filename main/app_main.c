@@ -31,6 +31,7 @@
 
 #include "pb_httpd.h"
 #include "pb_portal.h"
+#include "esp_ota_ops.h"
 
 // Optional local dev config (gitignored): WiFi creds + Moonraker host. Without it
 // the build still works — the device just comes up without network credentials.
@@ -206,4 +207,10 @@ void app_main(void)
 
     s_net_up = true;
     ESP_LOGI(TAG, "network bring-up done (wifi + moonraker + http api + portal, best-effort)");
+
+    // OTA rollback confirm: we reached a healthy state (safety loop running, init
+    // complete), so mark this image valid and cancel the pending-verify rollback.
+    // A future web-flashed image that crashes before here reverts to the last
+    // good app on reboot. No-op unless we actually booted in PENDING_VERIFY.
+    esp_ota_mark_app_valid_cancel_rollback();
 }

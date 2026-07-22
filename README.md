@@ -30,7 +30,8 @@ re-implemented.
 | Portal / status dashboard / heat LED | ✅ Breath-local; captive-portal provisioning + live dashboard validated |
 | HTTP control API (`pb_httpd`) | ✅ `/status` `/target` `/heartbeat` `/reset`; CSRF-gated mutations |
 | Klipper-side helper (M141 / Fluidd) | 🟡 Talks to the HTTP API; next build |
-| Flashing / partitions | 🟡 Flashes + boots; restore-to-stock documented, partition strategy TBD |
+| Flasher (`tools/flash.py`) | ✅ Backs up full stock flash first, then flashes; `--restore` returns to stock |
+| Web OTA update | ✅ Dual-OTA + rollback; upload from the UI, verified on hardware (OpenBreath-only, refused while heating) |
 
 **Shared-core boundary:** board-agnostic infrastructure (WiFi, event log, Moonraker
 client) is referenced from the [OpenVent](https://github.com/justinh-rahb/OpenVent)
@@ -82,11 +83,26 @@ Requires ESP-IDF v5.3+.
 git clone --recurse-submodules https://github.com/plastikman/OpenBreath
 idf.py set-target esp32c3
 idf.py build
-# Flash via the CH340K USB-C bridge (native USB is unavailable — GPIO18 is the SSR):
-idf.py -p /dev/ttyUSB0 flash monitor
+```
+
+## Install & update
+**First install (stock → OpenBreath):** use the flasher, which backs up the
+*entire* stock flash to a timestamped image **before** writing anything, so you
+can always return to stock. Flashing is over the on-board CH340K USB-C bridge
+(native USB is unavailable — GPIO18 is the SSR):
+```bash
+python3 tools/flash.py                 # backup stock, then flash OpenBreath
+python3 tools/flash.py --restore backups/stock-YYYYmmdd-HHMMSS.bin   # back to stock
 ```
 First boot with no stored WiFi starts an `OpenPanda_XXXX` AP + captive portal for
 provisioning.
+
+**Updating OpenBreath:** once running, flash a new build from the web UI —
+**Wi-Fi / printer setup → Firmware update** — by uploading `build/openbreath.bin`.
+The image lands in the inactive OTA slot, is verified, and the device reboots into
+it; a bad image rolls back on the next boot. Web OTA is **OpenBreath-only** — it
+does **not** restore stock firmware (use `tools/flash.py --restore` for that) and
+is refused while the heater is on.
 
 ## Layout
 ```
