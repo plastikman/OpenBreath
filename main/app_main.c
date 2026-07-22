@@ -31,6 +31,7 @@
 
 #include "pb_httpd.h"
 #include "pb_portal.h"
+#include "esp_ota_ops.h"
 
 // Optional local dev config (gitignored): WiFi creds + Moonraker host. Without it
 // the build still works — the device just comes up without network credentials.
@@ -47,6 +48,9 @@ static const char *TAG = "openbreath";
 // Set true once the network components have been started, so the control loop
 // doesn't touch pv_* state before it's initialized.
 static volatile bool s_net_up = false;
+// Set true only if pv_moonraker_start() succeeded — never query a client that
+// failed to initialize (its internal state/mutex may be unset).
+static volatile bool s_mk_up = false;
 
 // Brand the captive-portal AP as "OpenPanda_XXXX". The shared pv_wifi reads the
 // AP SSID from NVS (key "ap_ssid"), so we override its "OpenVent_" default this
@@ -125,8 +129,13 @@ static void control_task(void *arg)
     // (-> reboot -> heater off on boot) rather than silently stalling. Check the
     // result so we don't silently claim coverage that isn't actually armed.
     bool wdt_armed = (esp_task_wdt_add(NULL) == ESP_OK);
-    if (!wdt_armed)
-        ESP_LOGE(TAG, "task WDT subscribe FAILED — control loop is not watchdog-covered");
+    if (!wdt_armed) {
+        // Fail closed: without watchdog coverage a hung control loop could leave
+        // the SSR energized undetected, so refuse to heat at all. Latching the
+        // heater off makes every positive target return 409 until reboot.
+        ESP_LOGE(TAG, "task WDT subscribe FAILED — failing closed, heat disabled");
+        pb_heater_emergency_off("task watchdog unavailable");
+    }
 
     for (;;) {
         // Safety/control loop: enforces every heater cutoff + fan-follows-heater.
@@ -140,7 +149,7 @@ static void control_task(void *arg)
             dbg = 0;
             bool net = s_net_up;
             pv_moonraker_status_t st = {0};
-            if (net) pv_moonraker_get_status(&st);
+            if (net && s_mk_up) pv_moonraker_get_status(&st);
             uint32_t zc = 0, zciv = 0;
             pb_fan_zc_diag(&zc, &zciv);
             ESP_LOGI(TAG,
@@ -188,7 +197,9 @@ void app_main(void)
     // responsive (power-save adds ~0.5s latency spikes to incoming requests).
     esp_wifi_set_ps(WIFI_PS_NONE);
     if ((e = pv_moonraker_start()) != ESP_OK)
-        ESP_LOGE(TAG, "pv_moonraker_start: %s (continuing)", esp_err_to_name(e));
+        ESP_LOGE(TAG, "pv_moonraker_start: %s (continuing; will not query moonraker)", esp_err_to_name(e));
+    else
+        s_mk_up = true;
     if ((e = pb_httpd_start()) != ESP_OK)
         ESP_LOGE(TAG, "pb_httpd_start: %s (continuing)", esp_err_to_name(e));
     else if ((e = pb_portal_start()) != ESP_OK)   // portal needs the httpd handle
@@ -196,4 +207,10 @@ void app_main(void)
 
     s_net_up = true;
     ESP_LOGI(TAG, "network bring-up done (wifi + moonraker + http api + portal, best-effort)");
+
+    // OTA rollback confirm: we reached a healthy state (safety loop running, init
+    // complete), so mark this image valid and cancel the pending-verify rollback.
+    // A future web-flashed image that crashes before here reverts to the last
+    // good app on reboot. No-op unless we actually booted in PENDING_VERIFY.
+    esp_ota_mark_app_valid_cancel_rollback();
 }

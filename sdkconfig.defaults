@@ -23,3 +23,9 @@ CONFIG_ESP_TASK_WDT_PANIC=y
 # request-header buffer overflows ("header fields are too long") when submitting
 # the portal form. Bump it.
 CONFIG_HTTPD_MAX_REQ_HDR_LEN=2048
+
+# OTA rollback: a web-flashed image boots in PENDING_VERIFY and is only made
+# permanent once app_main reaches a healthy state (esp_ota_mark_app_valid_...).
+# A crash before that rolls back to the previous working app on reboot — matters
+# for a mains heater that must never be bricked into an undefined SSR state.
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y

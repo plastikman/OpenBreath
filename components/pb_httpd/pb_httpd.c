@@ -6,6 +6,11 @@
 #include "esp_http_server.h"
 #include "esp_log.h"
 #include "cJSON.h"
+#include "nvs.h"
+#include "esp_ota_ops.h"
+#include "esp_system.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -13,6 +18,46 @@
 
 static const char *TAG = "pb_httpd";
 static httpd_handle_t s_server;
+
+void pb_httpd_ctl_token(char *out, size_t outsz)
+{
+    if (!out || outsz == 0) return;
+    out[0] = '\0';
+    nvs_handle_t h;
+    if (nvs_open("app_nvs", NVS_READONLY, &h) != ESP_OK) return;
+    size_t sz = outsz;
+    nvs_get_str(h, "ctl_token", out, &sz);   // leaves out="" on any error
+    out[outsz - 1] = '\0';
+    nvs_close(h);
+}
+
+bool pb_httpd_auth_ok(httpd_req_t *req)
+{
+    char tok[65];
+    pb_httpd_ctl_token(tok, sizeof tok);
+
+    // Read the custom header. Its mere presence defeats cross-origin HTML forms
+    // (which cannot set custom headers); a configured token additionally pins the
+    // value. Absent header, or one too long to be a valid (<=64 char) token, fails.
+    char hv[65] = {0};
+    size_t hlen = httpd_req_get_hdr_value_len(req, PB_AUTH_HEADER);
+    if (hlen == 0 || hlen >= sizeof hv) return false;
+    if (httpd_req_get_hdr_value_str(req, PB_AUTH_HEADER, hv, sizeof hv) != ESP_OK) return false;
+
+    if (tok[0]) return strcmp(hv, tok) == 0;   // configured token -> exact match
+    return hv[0] != '\0';                       // else presence-only CSRF gate
+}
+
+// Reject a mutating request lacking a valid PB_AUTH_HEADER with 403. Returns true
+// when the caller should stop (already responded).
+static bool auth_reject(httpd_req_t *req)
+{
+    if (pb_httpd_auth_ok(req)) return false;
+    httpd_resp_set_status(req, "403 Forbidden");
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_sendstr(req, "{\"error\":\"missing/invalid " PB_AUTH_HEADER " header\"}");
+    return true;
+}
 
 static const char *ntc_status_str(pb_ntc_status_t s)
 {
@@ -71,6 +116,7 @@ static esp_err_t status_get(httpd_req_t *req)
 // wants heat; if it stops, the heater comms-watchdog latches off.
 static esp_err_t heartbeat_post(httpd_req_t *req)
 {
+    if (auth_reject(req)) return ESP_OK;
     pb_heater_notify_link_alive();
     httpd_resp_set_type(req, "application/json");
     return httpd_resp_sendstr(req, "{\"ok\":true}");
@@ -79,6 +125,7 @@ static esp_err_t heartbeat_post(httpd_req_t *req)
 // Explicit safety-fault reset (over-temp / sensor / comms). POST-only.
 static esp_err_t reset_post(httpd_req_t *req)
 {
+    if (auth_reject(req)) return ESP_OK;
     pb_heater_clear_fault();
     httpd_resp_set_type(req, "application/json");
     return httpd_resp_sendstr(req, "{\"ok\":true}");
@@ -86,13 +133,16 @@ static esp_err_t reset_post(httpd_req_t *req)
 
 // Parse a finite decimal temperature. strtof with an end-pointer check rejects
 // junk AND non-finite tokens ("nan"/"inf" -> isfinite() false), which atof would
-// silently accept.
+// silently accept. Trailing non-whitespace ("45junk", "45 60") is also rejected
+// so a partially-numeric value can never be silently truncated to a target.
 static bool parse_temp(const char *s, float *out)
 {
     if (!s || !*s) return false;
     char *end = NULL;
     float v = strtof(s, &end);
     if (end == s || !isfinite(v)) return false;
+    while (*end == ' ' || *end == '\t' || *end == '\r' || *end == '\n') end++;
+    if (*end != '\0') return false;      // trailing junk after the number
     *out = v;
     return true;
 }
@@ -102,6 +152,7 @@ static bool parse_temp(const char *s, float *out)
 // liveness. Falls back to a plain-number body if no query.
 static esp_err_t target_set(httpd_req_t *req)
 {
+    if (auth_reject(req)) return ESP_OK;
     float t = 0.0f;
     bool have = false;
     char q[48];
@@ -137,6 +188,66 @@ static esp_err_t target_set(httpd_req_t *req)
     return httpd_resp_send(req, buf, n);
 }
 
+// POST /update — stream a new OpenBreath .bin into the inactive OTA slot, verify,
+// set it as boot, and reboot. Auth-gated. SAFETY: refused while the heater is
+// armed/on — a reboot mid-heat leaves the SSR state undefined until re-init, so
+// the operator must turn the heater off first. Rollback (PENDING_VERIFY) means a
+// bad image that crashes before app_main marks itself healthy reverts on reboot.
+static esp_err_t ota_fail(httpd_req_t *req, const char *status, esp_ota_handle_t h, const char *msg)
+{
+    if (h) esp_ota_abort(h);
+    httpd_resp_set_status(req, status);
+    httpd_resp_set_type(req, "application/json");
+    char b[128];
+    snprintf(b, sizeof b, "{\"error\":\"%s\"}", msg);
+    httpd_resp_sendstr(req, b);
+    return ESP_FAIL;
+}
+
+static esp_err_t update_post(httpd_req_t *req)
+{
+    if (auth_reject(req)) return ESP_OK;
+
+    // Block while heating (chosen safety policy).
+    if (pb_heater_is_on() || pb_heater_get_target_c() > 0.0f)
+        return ota_fail(req, "409 Conflict", 0, "turn the heater off before updating");
+
+    const esp_partition_t *part = esp_ota_get_next_update_partition(NULL);
+    if (!part) return ota_fail(req, "500 Internal Server Error", 0, "no OTA partition");
+
+    esp_ota_handle_t h = 0;
+    if (esp_ota_begin(part, OTA_SIZE_UNKNOWN, &h) != ESP_OK)
+        return ota_fail(req, "500 Internal Server Error", 0, "esp_ota_begin failed");
+    ESP_LOGW(TAG, "OTA: receiving new image into %s", part->label);
+
+    char buf[1024];
+    int total = 0, r;
+    while ((r = httpd_req_recv(req, buf, sizeof buf)) > 0) {
+        if (esp_ota_write(h, buf, r) != ESP_OK)
+            return ota_fail(req, "500 Internal Server Error", h, "flash write failed");
+        total += r;
+    }
+    if (r < 0)      // recv error / timeout (r == 0 is a clean end of body)
+        return ota_fail(req, "400 Bad Request", h, "upload interrupted");
+    if (total == 0)
+        return ota_fail(req, "400 Bad Request", h, "empty upload");
+
+    esp_err_t err = esp_ota_end(h);   // validates the image (magic/size/checksum)
+    if (err != ESP_OK)
+        return ota_fail(req, "400 Bad Request", 0, "invalid firmware image");
+    if (esp_ota_set_boot_partition(part) != ESP_OK)
+        return ota_fail(req, "500 Internal Server Error", 0, "set boot partition failed");
+
+    ESP_LOGW(TAG, "OTA: %d bytes written to %s; rebooting", total, part->label);
+    httpd_resp_set_type(req, "application/json");
+    char b[64];
+    snprintf(b, sizeof b, "{\"ok\":true,\"bytes\":%d}", total);
+    httpd_resp_sendstr(req, b);
+    vTaskDelay(pdMS_TO_TICKS(600));   // let the response flush before we reboot
+    esp_restart();
+    return ESP_OK;                    // unreachable
+}
+
 esp_err_t pb_httpd_start(void)
 {
     httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
@@ -150,11 +261,13 @@ esp_err_t pb_httpd_start(void)
     httpd_uri_t tgt    = { .uri = "/target",    .method = HTTP_POST, .handler = target_set };
     httpd_uri_t hb     = { .uri = "/heartbeat", .method = HTTP_POST, .handler = heartbeat_post };
     httpd_uri_t rst    = { .uri = "/reset",     .method = HTTP_POST, .handler = reset_post };
+    httpd_uri_t upd    = { .uri = "/update",    .method = HTTP_POST, .handler = update_post };
     httpd_register_uri_handler(s_server, &status);
     httpd_register_uri_handler(s_server, &tgt);
     httpd_register_uri_handler(s_server, &hb);
     httpd_register_uri_handler(s_server, &rst);
-    ESP_LOGI(TAG, "HTTP API up :80 (GET /status; POST /target?t=<C>, /heartbeat, /reset)");
+    httpd_register_uri_handler(s_server, &upd);
+    ESP_LOGI(TAG, "HTTP API up :80 (GET /status; POST /target?t=<C>, /heartbeat, /reset, /update)");
     return ESP_OK;
 }
 

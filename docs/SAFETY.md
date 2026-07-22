@@ -14,9 +14,11 @@ of the SSR failing shorted** — the classic worst-case failure.
 
 ## Layer 2 (physics) — PTC self-limiting
 The element is a **PTC ceramic**: its resistance rises sharply at the Curie
-temperature, collapsing its own power. It **cannot thermally run away**; a
-firmware bug or a welded SSR can at most drive the chamber to the element's
-self-limited equilibrium, which the Layer-1 cutoff bounds anyway.
+temperature, collapsing its own power, so it is strongly **self-limiting** rather
+than thermally runaway-prone. A firmware bug or a welded SSR should at most drive
+the chamber toward the element's self-limited equilibrium, which the Layer-1
+cutoff bounds. This is a strong physical safety margin, **not an absolute
+guarantee** — no firmware can promise the absence of every fault.
 
 ## Layer 3 (this firmware) — soft cutoffs
 `pb_heater` enforces, every control tick, before any heat request:
