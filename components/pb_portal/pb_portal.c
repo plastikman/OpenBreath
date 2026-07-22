@@ -92,10 +92,12 @@ static void html_attr_escape(const char *in, char *out, size_t outsz)
 // Styled to match the stock BIQU Panda Breath web UI (dark #272525 page, #333
 // rounded cards, Arial, blue accent) — palette lifted from the stock firmware,
 // with the primary accent switched from stock red to the stock's blue (#4087FE).
+// Shared head + CSS + header + <div class=wrap> — used by both the status page
+// (STA root) and the config page (AP captive / /setup).
 static const char PAGE_HEAD[] =
     "<!doctype html><html><head><meta charset=utf-8>"
     "<meta name=viewport content='width=device-width,initial-scale=1'>"
-    "<title>OpenPanda Setup</title><style>"
+    "<title>OpenPanda</title><style>"
     ":root{--bg:#272525;--card:#333;--accent:#4087FE;--text:#F0F0F0;--input:#2c2c2c;--border:rgba(255,255,255,.12);color-scheme:dark}"
     "*{box-sizing:border-box}"
     "body{margin:0;background:var(--bg);font-family:Arial,Helvetica,sans-serif;color:var(--text)}"
@@ -112,15 +114,56 @@ static const char PAGE_HEAD[] =
     ".pw button{width:52px;flex:none;background:var(--input);border:1px solid var(--border);border-radius:8px;font-size:1.2rem;cursor:pointer}"
     "button.go{width:100%;padding:14px;margin-top:6px;border:0;border-radius:10px;background:var(--accent);color:#fff;font-size:1.05rem;font-weight:600;cursor:pointer}"
     "button.sec{width:100%;padding:10px;margin-top:12px;border:1px solid var(--border);border-radius:8px;background:#3a3a3a;color:#ddd;cursor:pointer}"
-    "small{color:#8a8a8a}</style></head><body>"
-    "<div class=hdr><h1>\xF0\x9F\x90\xBC OpenPanda</h1><p>Panda Breath \xC2\xB7 Wi-Fi Setup</p></div>"
-    "<div class=wrap><form method=POST action=/save>"
+    ".srow{display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid rgba(255,255,255,.07)}.srow:last-child{border:0}"
+    "small{color:#8a8a8a}a{color:#4aa3ff}</style></head><body>"
+    "<div class=hdr><h1>\xF0\x9F\x90\xBC OpenPanda</h1><p>Panda Breath</p></div>"
+    "<div class=wrap>";
+
+// Wi-Fi form card (config page).
+static const char CONFIG_WIFI[] =
+    "<form method=POST action=/save>"
     "<div class=card><h2>Wi-Fi</h2>"
     "<label>Network</label><select id=ssid name=ssid><option value=''>scanning\xE2\x80\xA6</option></select>"
     "<label>\xE2\x80\xA6 or hidden SSID</label><input name=ssid_manual placeholder='(optional)'>"
     "<label>Password</label><div class=pw><input id=pw type=password name=password autocomplete=off>"
     "<button type=button id=eye onclick='togglePw()' aria-label='show password'>\xF0\x9F\x91\x81</button></div>"
     "<button type=button class=sec onclick='rescan()'>Rescan networks</button></div>";
+
+// Live status dashboard (STA root). Polls /status every 2s; can set the target,
+// turn off, and clear a fault. Links to /setup for Wi-Fi/printer config.
+static const char STATUS_BODY[] =
+    "<div id=fault class=card style='display:none;background:#5a1f1f;color:#ffd7d7'></div>"
+    "<div class=card style='text-align:center'>"
+    "<div style='font-size:.8rem;color:#bdbdbd'>Chamber</div>"
+    "<div id=temp style='font-size:3rem;font-weight:700;color:var(--accent);line-height:1.15'>--</div>"
+    "<div id=cstat style='font-size:.75rem;color:#8a8a8a'></div></div>"
+    "<div class=card>"
+    "<div class=srow><span>Target</span><b id=target>--</b></div>"
+    "<div class=srow><span>Heating</span><b id=heating>--</b></div>"
+    "<div class=srow><span>Element (PTC)</span><b id=ptc>--</b></div></div>"
+    "<div class=card><label>Set chamber target (\xC2\xB0C, 0 = off)</label>"
+    "<div class=pw><input id=tin type=number min=0 max=70 step=1 value=45>"
+    "<button type=button class=go style='width:auto;margin:0;padding:12px 18px' onclick='setT()'>Set</button></div>"
+    "<button type=button class=sec onclick='setOff()'>Turn heater off</button>"
+    "<button type=button class=sec id=rst style='display:none' onclick='doReset()'>Clear fault</button></div>"
+    "<p style='text-align:center'><small><a href='/setup'>Wi-Fi / printer setup</a></small></p></div>"
+    "<script>"
+    "function u(i,v){document.getElementById(i).textContent=v;}"
+    "function refresh(){fetch('/status').then(function(r){return r.json();}).then(function(s){"
+    "u('temp',s.temp==null?'--':s.temp.toFixed(1)+'\\u00b0C');"
+    "u('ptc',s.ptc==null?'--':s.ptc.toFixed(1)+'\\u00b0C'+(s.ptc_status!='ok'?' ('+s.ptc_status+')':''));"
+    "u('target',s.target?s.target.toFixed(0)+'\\u00b0C':'off');"
+    "u('heating',s.heating?'ON':'off');"
+    "u('cstat',s.chamber_status=='ok'?'':'sensor: '+s.chamber_status);"
+    "var f=document.getElementById('fault'),rb=document.getElementById('rst');"
+    "if(s.fault){f.style.display='block';f.textContent='\\u26a0 Fault: '+(s.fault_reason||'')+' (fix, then Clear fault)';rb.style.display='block';}"
+    "else{f.style.display='none';rb.style.display='none';}"
+    "}).catch(function(){});}"
+    "function setT(){var v=document.getElementById('tin').value;fetch('/target?t='+encodeURIComponent(v),{method:'POST'}).then(refresh);}"
+    "function setOff(){fetch('/target?t=0',{method:'POST'}).then(refresh);}"
+    "function doReset(){fetch('/reset',{method:'POST'}).then(refresh);}"
+    "refresh();setInterval(refresh,2000);"
+    "</script></body></html>";
 
 static const char PAGE_TAIL[] =
     "<button type=submit class=go>Save &amp; Connect</button></form>"
@@ -138,7 +181,17 @@ static const char PAGE_TAIL[] =
     "</script></body></html>";
 
 // ---- handlers ----
-static esp_err_t portal_page(httpd_req_t *req)
+// Live status dashboard (root in STA mode).
+static esp_err_t status_page(httpd_req_t *req)
+{
+    httpd_resp_set_type(req, "text/html");
+    SEND(req, PAGE_HEAD);
+    SEND(req, STATUS_BODY);
+    return httpd_resp_send_chunk(req, NULL, 0);
+}
+
+// Wi-Fi + Moonraker config page (AP captive root, and /setup in STA mode).
+static esp_err_t config_page(httpd_req_t *req)
 {
     char mk_host[64] = {0};
     uint16_t mk_port = 7125;
@@ -152,6 +205,7 @@ static esp_err_t portal_page(httpd_req_t *req)
 
     httpd_resp_set_type(req, "text/html");
     SEND(req, PAGE_HEAD);
+    SEND(req, CONFIG_WIFI);
 
     // Moonraker card — values embedded so we never emit an empty chunk. mk_host
     // is user-controlled (stored in NVS via /save), so escape it before it lands
@@ -168,6 +222,14 @@ static esp_err_t portal_page(httpd_req_t *req)
 
     SEND(req, PAGE_TAIL);
     return httpd_resp_send_chunk(req, NULL, 0);
+}
+
+// Catch-all root: in AP mode serve the config page so captive-portal probes land
+// on setup; in STA mode serve the live status dashboard.
+static esp_err_t root_page(httpd_req_t *req)
+{
+    if (pv_wifi_state() == PV_WIFI_STATE_AP_PORTAL) return config_page(req);
+    return status_page(req);
 }
 
 static esp_err_t scan_json(httpd_req_t *req)
@@ -253,10 +315,12 @@ esp_err_t pb_portal_start(void)
     httpd_uri_t save   = { .uri = "/save",      .method = HTTP_POST, .handler = save_post };
     httpd_uri_t rescan = { .uri = "/rescan",    .method = HTTP_POST, .handler = rescan_post };
     httpd_uri_t scan   = { .uri = "/scan.json", .method = HTTP_GET,  .handler = scan_json };
-    httpd_uri_t root   = { .uri = "/*",          .method = HTTP_GET,  .handler = portal_page };
+    httpd_uri_t setup  = { .uri = "/setup",     .method = HTTP_GET,  .handler = config_page };
+    httpd_uri_t root   = { .uri = "/*",          .method = HTTP_GET,  .handler = root_page };
     httpd_register_uri_handler(s, &save);
     httpd_register_uri_handler(s, &rescan);
     httpd_register_uri_handler(s, &scan);
+    httpd_register_uri_handler(s, &setup);
     httpd_register_uri_handler(s, &root);   // catch-all LAST (captive-portal probes)
 
     if (pv_wifi_state() == PV_WIFI_STATE_AP_PORTAL) {
