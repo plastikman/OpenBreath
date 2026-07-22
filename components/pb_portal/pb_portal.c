@@ -189,7 +189,12 @@ static const char STATUS_BODY[] =
     "if(s.fault){f.style.display='block';f.textContent='\\u26a0 Fault: '+(s.fault_reason||'')+' (fix, then Clear fault)';rb.style.display='block';}"
     "else{f.style.display='none';rb.style.display='none';}"
     "}).catch(function(){});}"
-    "function setT(){var v=document.getElementById('tin').value;iOwn=true;post('/target?t='+encodeURIComponent(v)).then(refresh);}"
+    // Take ownership ONLY after the device accepts a positive target (HTTP ok).
+    // A rejected/failed request must NOT leave this tab thinking it owns heat, or
+    // it could later heartbeat a target another controller set.
+    "function setT(){var v=document.getElementById('tin').value;var pos=parseFloat(v)>0;"
+    "post('/target?t='+encodeURIComponent(v)).then(function(r){iOwn=!!(r&&r.ok&&pos);refresh();})"
+    ".catch(function(){iOwn=false;refresh();});}"
     "function setOff(){iOwn=false;post('/target?t=0').then(refresh);}"
     "function doReset(){post('/reset').then(refresh);}"
     "refresh();setInterval(refresh,2000);"

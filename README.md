@@ -68,8 +68,11 @@ Every **mutating** endpoint (and the portal's STA-mode `/save`) requires a custo
 CORS is never enabled, so an ordinary drive-by web page can't drive the heater or
 rewrite the WiFi config. This is **CSRF hardening for a trusted LAN, not transport
 security** — the API is unencrypted HTTP. For untrusted networks, set a control
-token in NVS (`app_nvs` / `ctl_token`) and the header must match it exactly; the
-same-origin dashboard embeds the configured token automatically.
+token in NVS (`app_nvs` / `ctl_token`) and the header must match it exactly. The
+token is **never embedded in the served pages**: when one is configured the
+dashboard prompts for it and caches it in the browser (localStorage), so it is
+real per-client auth rather than a value baked into public HTML. With no token
+configured, pages use a fixed `web` sentinel (pure CSRF hardening).
 
 ## Temperature conversion
 Fully reverse-engineered from the stock firmware — a low-side resistance divider
