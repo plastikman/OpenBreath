@@ -177,6 +177,10 @@ static const char STATUS_BODY[] =
     "u('temp',s.temp==null?'--':s.temp.toFixed(1)+'\\u00b0C');"
     "u('ptc',s.ptc==null?'--':s.ptc.toFixed(1)+'\\u00b0C'+(s.ptc_status!='ok'?' ('+s.ptc_status+')':''));"
     "u('target',s.target?s.target.toFixed(0)+'\\u00b0C':'off');"
+    // Reflect the live target (e.g. one set by Klipper) in the set-temp box, but
+    // never while the user is typing in it. Keep the last value when off.
+    "var tin=document.getElementById('tin');"
+    "if(document.activeElement!==tin&&s.target>0){tin.value=Math.round(s.target);}"
     "u('heating',s.heating?'ON':'off');"
     "var ob=document.getElementById('off');var on=s.target>0;ob.disabled=!on;"
     "ob.style.background=on?'var(--accent)':'';ob.style.color=on?'#fff':'';ob.style.borderColor=on?'var(--accent)':'';"
