@@ -128,6 +128,14 @@ static esp_err_t heartbeat_post(httpd_req_t *req)
 static esp_err_t reset_post(httpd_req_t *req)
 {
     if (auth_reject(req)) return ESP_OK;
+    // A permanent inhibit can't be cleared — say so (409) rather than falsely
+    // reporting a successful clear.
+    if (pb_heater_is_inhibited()) {
+        httpd_resp_set_status(req, "409 Conflict");
+        httpd_resp_set_type(req, "application/json");
+        return httpd_resp_sendstr(req,
+            "{\"error\":\"heater permanently inhibited — reboot required\"}");
+    }
     pb_heater_clear_fault();
     httpd_resp_set_type(req, "application/json");
     return httpd_resp_sendstr(req, "{\"ok\":true}");
