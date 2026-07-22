@@ -55,6 +55,7 @@ static bool s_ready;
 static float s_win[2][PB_AVG_WINDOW];
 static int   s_win_cnt[2];
 static int   s_win_idx[2];
+static pb_ntc_status_t s_last_status[2] = { PB_NTC_UNINIT, PB_NTC_UNINIT };
 
 static const adc_channel_t s_chan[2] = { PB_ADC_CH_CHAMBER, PB_ADC_CH_PTC };
 
@@ -121,28 +122,38 @@ esp_err_t pb_ntc_init(void)
     return ESP_OK;
 }
 
+// Returns the INSTANTANEOUS temperature in *out_c (NAN on any fault) so the
+// heater over-temp cutoffs act on the freshest sample, not a lagged average.
+// A successful read still feeds the moving-average filter that backs
+// pb_ntc_smoothed_c() (used for display/telemetry). The per-channel status is
+// latched for pb_ntc_last_status().
 pb_ntc_status_t pb_ntc_read(pb_ntc_channel_t ch, float *out_c)
 {
-    if (!s_ready) return PB_NTC_UNINIT;
+    pb_ntc_status_t st = PB_NTC_UNINIT;
+    float t = NAN;
 
-    int raw = 0;
-    if (adc_oneshot_read(s_adc, s_chan[ch], &raw) != ESP_OK) return PB_NTC_UNINIT;
+    do {
+        if (!s_ready) { st = PB_NTC_UNINIT; break; }
+        int raw = 0;
+        if (adc_oneshot_read(s_adc, s_chan[ch], &raw) != ESP_OK) { st = PB_NTC_UNINIT; break; }
+        int mv = 0;
+        if (adc_cali_raw_to_voltage(s_cali[ch], raw, &mv) != ESP_OK) { st = PB_NTC_UNINIT; break; }
+        if (raw > PB_RAW_OPEN_MAX)  { st = PB_NTC_OPEN;  break; }
+        if (raw <= PB_RAW_SHORT_MIN) { st = PB_NTC_SHORT; break; }
+        float v = (float)mv / 1000.0f;               // volts at the pin
+        if (v <= 0.0f || v >= PB_VSUPPLY_V) { st = PB_NTC_OPEN; break; }
+        float r_kohm = (float)s_rref_kohm * v / (PB_VSUPPLY_V - v);
+        t = rntc_to_temp_c(r_kohm);
+        push_average(ch, t);                          // feed the display filter
+        st = PB_NTC_OK;
+    } while (0);
 
-    int mv = 0;
-    if (adc_cali_raw_to_voltage(s_cali[ch], raw, &mv) != ESP_OK) return PB_NTC_UNINIT;
-
-    if (raw > PB_RAW_OPEN_MAX)  return PB_NTC_OPEN;
-    if (raw <= PB_RAW_SHORT_MIN) return PB_NTC_SHORT;
-
-    float v = (float)mv / 1000.0f;               // volts at the pin
-    if (v <= 0.0f || v >= PB_VSUPPLY_V) return PB_NTC_OPEN;
-
-    float r_kohm = (float)s_rref_kohm * v / (PB_VSUPPLY_V - v);
-    float t = rntc_to_temp_c(r_kohm);
-    float smoothed = push_average(ch, t);
-    if (out_c) *out_c = smoothed;
-    return PB_NTC_OK;
+    s_last_status[ch] = st;
+    if (out_c) *out_c = t;                            // instantaneous (NAN on fault)
+    return st;
 }
+
+pb_ntc_status_t pb_ntc_last_status(pb_ntc_channel_t ch) { return s_last_status[ch]; }
 
 float pb_ntc_smoothed_c(pb_ntc_channel_t ch)
 {

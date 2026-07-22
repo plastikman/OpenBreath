@@ -122,8 +122,11 @@ static void control_task(void *arg)
     int dbg = 0;
 
     // Subscribe this task to the task watchdog so a hung control loop panics
-    // (-> reboot -> heater off on boot) rather than silently stalling.
-    esp_task_wdt_add(NULL);
+    // (-> reboot -> heater off on boot) rather than silently stalling. Check the
+    // result so we don't silently claim coverage that isn't actually armed.
+    bool wdt_armed = (esp_task_wdt_add(NULL) == ESP_OK);
+    if (!wdt_armed)
+        ESP_LOGE(TAG, "task WDT subscribe FAILED — control loop is not watchdog-covered");
 
     for (;;) {
         // Safety/control loop: enforces every heater cutoff + fan-follows-heater.
@@ -131,7 +134,7 @@ static void control_task(void *arg)
         // and the comms watchdog is fed by controller polls in pb_httpd — so we
         // must NOT set the target here (that would clobber the HTTP-set value).
         pb_policy_tick();
-        esp_task_wdt_reset();   // successful loop iteration
+        if (wdt_armed) esp_task_wdt_reset();   // successful loop iteration
 
         if (++dbg >= 4) {   // ~2 s
             dbg = 0;
@@ -175,13 +178,22 @@ void app_main(void)
 #if defined(OB_WIFI_SSID) || defined(OB_MOONRAKER_HOST)
     seed_dev_config();
 #endif
-    ESP_ERROR_CHECK(pv_wifi_start());
+    // Network bring-up is LOG-AND-CONTINUE, never ESP_ERROR_CHECK: a transient
+    // init error (e.g. httpd_start NO_MEM under boot heap pressure) must not
+    // abort/reboot and tear down the safety loop that's already running above.
+    esp_err_t e;
+    if ((e = pv_wifi_start()) != ESP_OK)
+        ESP_LOGE(TAG, "pv_wifi_start: %s (continuing; safety loop unaffected)", esp_err_to_name(e));
     // Mains-powered device: disable WiFi modem-sleep so the control API stays
     // responsive (power-save adds ~0.5s latency spikes to incoming requests).
     esp_wifi_set_ps(WIFI_PS_NONE);
-    ESP_ERROR_CHECK(pv_moonraker_start());   // loads mk_host/mk_port from NVS, connects
-    ESP_ERROR_CHECK(pb_httpd_start());       // HTTP control API (the Klipper module talks to this)
-    ESP_ERROR_CHECK(pb_portal_start());      // config + captive portal on the same server
+    if ((e = pv_moonraker_start()) != ESP_OK)
+        ESP_LOGE(TAG, "pv_moonraker_start: %s (continuing)", esp_err_to_name(e));
+    if ((e = pb_httpd_start()) != ESP_OK)
+        ESP_LOGE(TAG, "pb_httpd_start: %s (continuing)", esp_err_to_name(e));
+    else if ((e = pb_portal_start()) != ESP_OK)   // portal needs the httpd handle
+        ESP_LOGE(TAG, "pb_portal_start: %s (continuing)", esp_err_to_name(e));
+
     s_net_up = true;
-    ESP_LOGI(TAG, "networking up (wifi + moonraker + http api + portal)");
+    ESP_LOGI(TAG, "network bring-up done (wifi + moonraker + http api + portal, best-effort)");
 }

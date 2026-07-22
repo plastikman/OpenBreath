@@ -62,6 +62,32 @@ static bool form_get(const char *body, const char *key, char *out, size_t outsz)
     return false;
 }
 
+// Escape a string for insertion inside an HTML double-quoted attribute value,
+// so a stored mk_host can't break out of value="..." and inject markup/script.
+static void html_attr_escape(const char *in, char *out, size_t outsz)
+{
+    size_t o = 0;
+    for (const char *p = in; *p; p++) {
+        const char *rep;
+        switch (*p) {
+            case '&':  rep = "&amp;";  break;
+            case '"':  rep = "&quot;"; break;
+            case '\'': rep = "&#39;";  break;
+            case '<':  rep = "&lt;";   break;
+            case '>':  rep = "&gt;";   break;
+            default:
+                if (o + 1 >= outsz) { out[o] = '\0'; return; }
+                out[o++] = *p;
+                continue;
+        }
+        size_t rl = strlen(rep);
+        if (o + rl >= outsz) break;
+        memcpy(out + o, rep, rl);
+        o += rl;
+    }
+    out[o] = '\0';
+}
+
 // ---- static page pieces ----
 // Styled to match the stock BIQU Panda Breath web UI (dark #272525 page, #333
 // rounded cards, Arial, blue accent) — palette lifted from the stock firmware,
@@ -127,13 +153,17 @@ static esp_err_t portal_page(httpd_req_t *req)
     httpd_resp_set_type(req, "text/html");
     SEND(req, PAGE_HEAD);
 
-    // Moonraker card — values embedded so we never emit an empty chunk.
-    char card[320];
+    // Moonraker card — values embedded so we never emit an empty chunk. mk_host
+    // is user-controlled (stored in NVS via /save), so escape it before it lands
+    // in the value="..." attribute (stored-XSS prevention). mk_port is a uint16.
+    char mk_host_esc[192];
+    html_attr_escape(mk_host, mk_host_esc, sizeof mk_host_esc);
+    char card[420];
     snprintf(card, sizeof card,
         "<div class=card><h2>Printer (Moonraker)</h2>"
         "<label>Host / IP</label><input name=mk_host value=\"%s\" placeholder='e.g. 10.168.2.34'>"
         "<label>Port</label><input name=mk_port value=\"%u\"></div>",
-        mk_host, (unsigned)mk_port);
+        mk_host_esc, (unsigned)mk_port);
     SEND(req, card);
 
     SEND(req, PAGE_TAIL);

@@ -28,9 +28,12 @@ void pb_policy_tick(void)
 {
     pb_heater_tick();
 
-    // Simple autonomous rule: ensure some airflow whenever the heater is driving,
-    // otherwise honor the requested fan level. TODO: refine (filter mode, spool-down).
-    if (pb_heater_is_on() && s_requested_fan < 30) {
+    // Ensure airflow while in heat mode (steady across the SSR's bang-bang
+    // cycling — not pb_heater_is_on(), which chatters) AND while a fault is
+    // latched, so a just-tripped over-temp chamber keeps getting cooled until the
+    // operator resets. Otherwise honor the requested fan level.
+    bool want_airflow = pb_heater_heat_mode() || pb_heater_is_faulted();
+    if (want_airflow && s_requested_fan < 30) {
         pb_fan_set_level(30);
     } else {
         pb_fan_set_level(s_requested_fan);

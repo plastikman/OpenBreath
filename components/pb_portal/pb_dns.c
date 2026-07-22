@@ -46,7 +46,8 @@ static void dns_task(void *arg)
     if (s_sock < 0 || bind(s_sock, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
         ESP_LOGE(TAG, "socket/bind failed");
         if (s_sock >= 0) { close(s_sock); s_sock = -1; }
-        vTaskDelete(NULL);
+        s_task = NULL;          // clear the handle before self-delete so pb_dns_start
+        vTaskDelete(NULL);      // can retry and pb_dns_stop won't touch a dead TCB
         return;
     }
     ESP_LOGI(TAG, "captive DNS on UDP :%d", DNS_PORT);
@@ -70,6 +71,7 @@ static void dns_task(void *arg)
         if (qtype != 1 || qclass != 1) continue;           // A / IN only
 
         hdr->flags = htons(0x8180);
+        hdr->qdcount = htons(1);   // we keep only the first question below
         hdr->ancount = htons(1);
         hdr->nscount = 0;
         hdr->arcount = 0;

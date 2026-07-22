@@ -24,8 +24,13 @@
 esp_err_t pb_heater_init(void);
 
 // Set the desired chamber temperature (clamped to [0, PB_HEATER_MAX_TARGET_C]).
-// 0 (or below) disables heating.
-void pb_heater_set_target_c(float target_c);
+// 0 (or below) disables heating. Returns:
+//   ESP_OK             - accepted
+//   ESP_ERR_INVALID_ARG   - non-finite (NaN/Inf) target, rejected
+//   ESP_ERR_INVALID_STATE - a positive target while a safety fault is latched
+//                           (clear it with pb_heater_clear_fault first); maps to
+//                           HTTP 409. Heat is never queued behind a fault latch.
+esp_err_t pb_heater_set_target_c(float target_c);
 float pb_heater_get_target_c(void);
 
 // Feed the comms watchdog: call whenever a live controller link is confirmed
@@ -49,5 +54,12 @@ void pb_heater_clear_fault(void);
 // True if a safety trip has latched the heater off (needs an explicit clear).
 bool pb_heater_is_faulted(void);
 
-// True if the SSR is currently commanded on.
+// The reason string from the most recent trip (NULL if none / after clear).
+const char *pb_heater_fault_reason(void);
+
+// True if the SSR is currently commanded on (momentary bang-bang state).
 bool pb_heater_is_on(void);
+
+// True in "heat mode": a target is armed and no fault is latched. Steady across
+// the SSR's bang-bang cycling — use this (not pb_heater_is_on) for the fan/LED.
+bool pb_heater_heat_mode(void);

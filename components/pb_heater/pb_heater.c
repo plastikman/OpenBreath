@@ -3,18 +3,27 @@
 #include "pb_board.h"
 #include "pb_ntc.h"
 
+#include <math.h>
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "driver/gpio.h"
+#include "freertos/FreeRTOS.h"
 
 static const char *TAG = "pb_heater";
 
-static float   s_target_c;
-static bool    s_on;
-static bool    s_latched_off;        // set by a safety trip; blocks heat until re-armed
-static int64_t s_last_link_us;
+// Heater state is touched by BOTH the control task (pb_heater_tick, via the
+// 2 Hz loop) and the HTTP task (set_target / notify_link_alive / clear_fault /
+// getters). All of it is serialized under this spinlock — in particular the
+// 64-bit s_last_link_us would tear on the 32-bit RISC-V core otherwise.
+static portMUX_TYPE s_mux = portMUX_INITIALIZER_UNLOCKED;
 
-static void ssr_set(bool on)
+static float       s_target_c;      // guarded by s_mux
+static bool        s_latched_off;   // guarded by s_mux (set by a safety trip)
+static int64_t     s_last_link_us;  // guarded by s_mux
+static const char *s_fault_reason;  // guarded by s_mux (points at a string literal)
+static bool        s_on;            // written only by the control task; atomic read
+
+static void ssr_set(bool on)        // control-task context only
 {
     gpio_set_level(PB_GPIO_RELAY, on ? 1 : 0);
     s_on = on;
@@ -32,60 +41,120 @@ esp_err_t pb_heater_init(void)
     esp_err_t err = gpio_config(&io);
     if (err != ESP_OK) return err;
     ssr_set(false);                  // guaranteed OFF before any request
+    taskENTER_CRITICAL(&s_mux);
     s_target_c = 0.0f;
     s_latched_off = false;
+    s_fault_reason = NULL;
     s_last_link_us = esp_timer_get_time();
+    taskEXIT_CRITICAL(&s_mux);
     ESP_LOGI(TAG, "init: SSR forced OFF");
     return ESP_OK;
 }
 
-void pb_heater_set_target_c(float target_c)
+esp_err_t pb_heater_set_target_c(float target_c)
 {
+    if (!isfinite(target_c)) {           // reject NaN / +-Inf defensively
+        ESP_LOGW(TAG, "rejected non-finite target");
+        return ESP_ERR_INVALID_ARG;
+    }
     if (target_c < 0.0f) target_c = 0.0f;
     if (target_c > PB_HEATER_MAX_TARGET_C) target_c = PB_HEATER_MAX_TARGET_C;
-    s_target_c = target_c;
-    // NOTE: a new target does NOT clear a latched safety fault. Over-temp /
-    // sensor-fault / comms-loss trips require an explicit pb_heater_clear_fault().
-    ESP_LOGI(TAG, "target set to %.1f C%s", s_target_c,
-             s_latched_off ? " (still latched off by a safety fault)" : "");
+
+    esp_err_t r = ESP_OK;
+    taskENTER_CRITICAL(&s_mux);
+    if (s_latched_off && target_c > 0.0f) {
+        r = ESP_ERR_INVALID_STATE;       // never queue heat behind a fault latch
+    } else {
+        s_target_c = target_c;
+    }
+    taskEXIT_CRITICAL(&s_mux);
+
+    if (r == ESP_OK)
+        ESP_LOGI(TAG, "target set to %.1f C", target_c);
+    else
+        ESP_LOGW(TAG, "target %.1f rejected: fault latched (POST /reset, then a fresh target)", target_c);
+    return r;
 }
 
-float pb_heater_get_target_c(void) { return s_target_c; }
+float pb_heater_get_target_c(void)
+{
+    taskENTER_CRITICAL(&s_mux);
+    float t = s_target_c;
+    taskEXIT_CRITICAL(&s_mux);
+    return t;
+}
 
-void pb_heater_notify_link_alive(void) { s_last_link_us = esp_timer_get_time(); }
+void pb_heater_notify_link_alive(void)
+{
+    int64_t now = esp_timer_get_time();
+    taskENTER_CRITICAL(&s_mux);
+    s_last_link_us = now;
+    taskEXIT_CRITICAL(&s_mux);
+}
 
-void pb_heater_emergency_off(const char *reason)
+void pb_heater_emergency_off(const char *reason)   // control-task context
 {
     ssr_set(false);
+    taskENTER_CRITICAL(&s_mux);
     s_target_c = 0.0f;
     s_latched_off = true;
+    s_fault_reason = reason ? reason : "unspecified";
+    taskEXIT_CRITICAL(&s_mux);
     ESP_LOGW(TAG, "EMERGENCY OFF: %s", reason ? reason : "(unspecified)");
 }
 
 void pb_heater_clear_fault(void)
 {
-    if (s_latched_off)
-        ESP_LOGW(TAG, "safety fault latch cleared (will re-trip if condition persists)");
-    s_latched_off = false;   // next tick re-evaluates safety; a persistent fault re-latches
+    taskENTER_CRITICAL(&s_mux);
+    bool was = s_latched_off;
+    s_latched_off = false;
+    s_target_c = 0.0f;          // reset leaves the target at ZERO — a fresh
+    s_fault_reason = NULL;      // target command is required to resume heating.
+    taskEXIT_CRITICAL(&s_mux);
+    if (was) ESP_LOGW(TAG, "fault latch cleared; target reset to 0 (send a fresh target to resume)");
 }
 
-bool pb_heater_is_faulted(void) { return s_latched_off; }
+bool pb_heater_is_faulted(void) { return s_latched_off; }   // atomic bool read
+bool pb_heater_is_on(void) { return s_on; }                 // atomic bool read
 
-bool pb_heater_is_on(void) { return s_on; }
-
-void pb_heater_tick(void)
+const char *pb_heater_fault_reason(void)
 {
-    // Heating-active indicator LED: steady ON while a chamber target is set and
-    // not safety-tripped (i.e. "heat mode on"), regardless of the momentary SSR
-    // cycling. TODO: confirm which physical button LED is the "heating" light
-    // (K1=GPIO6, K2=GPIO5, K3=GPIO4) and remap if needed.
-    gpio_set_level(PB_GPIO_LED_K1, (s_target_c > 0.0f && !s_latched_off) ? 1 : 0);
+    taskENTER_CRITICAL(&s_mux);
+    const char *r = s_fault_reason;
+    taskEXIT_CRITICAL(&s_mux);
+    return r;
+}
 
-    // --- Safety cutoffs first, unconditionally ---
+bool pb_heater_heat_mode(void)     // "armed and not tripped" (independent of SSR cycling)
+{
+    taskENTER_CRITICAL(&s_mux);
+    bool m = (s_target_c > 0.0f && !s_latched_off);
+    taskEXIT_CRITICAL(&s_mux);
+    return m;
+}
+
+void pb_heater_tick(void)          // control-task context; sole writer of s_on
+{
+    float   target;
+    bool    latched;
+    int64_t last_link;
+    taskENTER_CRITICAL(&s_mux);
+    target = s_target_c;
+    latched = s_latched_off;
+    last_link = s_last_link_us;
+    taskEXIT_CRITICAL(&s_mux);
+
+    const bool armed = (target > 0.0f);
+
+    // Heat-mode indicator LED (steady while armed + not tripped; independent of
+    // the momentary SSR bang-bang cycling).
+    gpio_set_level(PB_GPIO_LED_K1, (armed && !latched) ? 1 : 0);
+
     float ptc_c = 0.0f, chamber_c = 0.0f;
     pb_ntc_status_t ps = pb_ntc_read(PB_NTC_PTC, &ptc_c);
     pb_ntc_status_t cs = pb_ntc_read(PB_NTC_CHAMBER, &chamber_c);
 
+    // Over-temp cutoffs — unconditional whenever the sensor reads valid.
     if (ps == PB_NTC_OK && ptc_c >= PB_HEATER_PTC_CUTOFF_C) {
         pb_heater_emergency_off("PTC element over-temp");
         return;
@@ -94,37 +163,32 @@ void pb_heater_tick(void)
         pb_heater_emergency_off("chamber over-temp");
         return;
     }
-    // Sensor fault is fail-closed on EITHER thermistor whenever a target is armed
-    // — not just while the SSR happens to be on (it may be momentarily off at
-    // setpoint). A blind heater (dead chamber sensor) or an unmonitored element
-    // (dead PTC sensor) must latch off.
-    const bool armed = (s_target_c > 0.0f);
-    if (armed && (cs == PB_NTC_OPEN || cs == PB_NTC_SHORT)) {
+    // While armed, EITHER thermistor being anything other than OK — OPEN, SHORT,
+    // or a UNINIT read error — is fail-closed. A blind heater (dead chamber
+    // sensor) or an unmonitored element (dead PTC sensor) must latch off.
+    if (armed && cs != PB_NTC_OK) {
         pb_heater_emergency_off("chamber sensor fault");
         return;
     }
-    if (armed && (ps == PB_NTC_OPEN || ps == PB_NTC_SHORT)) {
+    if (armed && ps != PB_NTC_OK) {
         pb_heater_emergency_off("PTC sensor fault");
         return;
     }
-    // Comms-loss watchdog (only relevant while trying to heat).
-    if (s_target_c > 0.0f &&
-        (esp_timer_get_time() - s_last_link_us) > (int64_t)PB_HEATER_COMMS_TIMEOUT_MS * 1000) {
+    // Comms-loss watchdog (only while trying to heat).
+    if (armed && (esp_timer_get_time() - last_link) > (int64_t)PB_HEATER_COMMS_TIMEOUT_MS * 1000) {
         pb_heater_emergency_off("controller link lost");
         return;
     }
 
-    if (s_latched_off || s_target_c <= 0.0f || cs != PB_NTC_OK) {
+    if (latched || !armed) {
         if (s_on) ssr_set(false);
         return;
     }
 
-    // --- Bang-bang with hysteresis around the set-point ---
-    if (!s_on && chamber_c < (s_target_c - PB_HEATER_HYSTERESIS_C)) {
+    // Here: armed && !latched && cs==OK && ps==OK — bang-bang with hysteresis.
+    if (!s_on && chamber_c < (target - PB_HEATER_HYSTERESIS_C)) {
         ssr_set(true);
-    } else if (s_on && chamber_c >= s_target_c) {
+    } else if (s_on && chamber_c >= target) {
         ssr_set(false);
     }
-    // TODO: optional PID for tighter regulation; bang-bang is safe and adequate
-    //       for a chamber given the PTC's slow thermal mass.
 }
