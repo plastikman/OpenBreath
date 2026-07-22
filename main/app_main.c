@@ -24,6 +24,7 @@
 #include "pb_policy.h"
 
 #include "esp_wifi.h"
+#include "esp_mac.h"
 #include "pv_wifi.h"
 #include "pv_moonraker.h"
 
@@ -45,6 +46,25 @@ static const char *TAG = "openbreath";
 // Set true once the network components have been started, so the control loop
 // doesn't touch pv_* state before it's initialized.
 static volatile bool s_net_up = false;
+
+// Brand the captive-portal AP as "OpenPanda_XXXX". The shared pv_wifi reads the
+// AP SSID from NVS (key "ap_ssid"), so we override its "OpenVent_" default this
+// way without patching the shared component. (mDNS hostname stays OpenVent.local
+// until pv_wifi is made configurable upstream.)
+static void brand_ap(void)
+{
+    uint8_t mac[6] = {0};
+    esp_read_mac(mac, ESP_MAC_WIFI_SOFTAP);
+    char ssid[33];
+    snprintf(ssid, sizeof ssid, "OpenPanda_%02X%02X", mac[4], mac[5]);
+    nvs_handle_t h;
+    if (nvs_open("app_nvs", NVS_READWRITE, &h) == ESP_OK) {
+        nvs_set_str(h, "ap_ssid", ssid);
+        nvs_commit(h);
+        nvs_close(h);
+        ESP_LOGI(TAG, "AP SSID branded: %s", ssid);
+    }
+}
 
 static void nvs_init(void)
 {
@@ -138,6 +158,7 @@ void app_main(void)
     // Bring up networking. If a start call blocks under a flaky link, the control
     // loop above is already running, so safety + telemetry continue.
     nvs_init();
+    brand_ap();                              // AP name = OpenPanda_XXXX
 #if defined(OB_WIFI_SSID) || defined(OB_MOONRAKER_HOST)
     seed_dev_config();
 #endif
