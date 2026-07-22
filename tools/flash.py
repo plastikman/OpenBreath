@@ -2,9 +2,15 @@
 # SPDX-License-Identifier: MIT
 """OpenBreath installer/flasher for the BIGTREETECH Panda Breath (ESP32-C3).
 
+*** READ THIS FIRST ***
+Installing OpenBreath OVERWRITES THE ENTIRE FLASH and ERASES the stock firmware.
+BIGTREETECH does not publish stock images, so THE FULL BACKUP THIS TOOL TAKES IS
+THE ONLY WAY BACK TO STOCK. If you skip the backup or lose the backup file, THERE
+IS NO GOING BACK. Store the backup somewhere safe (copy it off this machine).
+
 Backs up the ENTIRE existing flash to a timestamped file BEFORE writing anything,
 then flashes the OpenBreath build. The backup is a full 4 MB image, so you can
-always return to stock:
+return to stock:
 
     # First-time install (back up stock, then flash OpenBreath):
     python3 tools/flash.py
@@ -137,17 +143,27 @@ def main():
     if args.restore:
         return do_restore(args.port, args.baud, args.restore)
 
-    print("OpenBreath flasher — this will replace the stock firmware.")
-    print("A full stock backup is taken first so you can always restore it.")
+    print("=" * 70)
+    print(" OpenBreath flasher")
+    print(" !! THIS OVERWRITES THE WHOLE DEVICE AND ERASES THE STOCK FIRMWARE !!")
+    print(" There is NO way back to stock without a full backup, and BIGTREETECH")
+    print(" does not publish stock images. The backup taken below is your ONLY")
+    print(" recovery path — keep it safe and copy it off this machine.")
+    print("=" * 70)
     if args.no_backup:
-        print("\n*** --no-backup: skipping the stock backup. You will NOT be able to")
-        print("*** return to stock unless you already have a backup image. ***")
-        if not confirm("Really flash without a backup?"):
+        print("\n*** --no-backup: SKIPPING the stock backup. ***")
+        print("*** If you do not ALREADY have a known-good backup stored safely, you")
+        print("*** will PERMANENTLY lose the ability to return to stock firmware. ***")
+        if not confirm("Really flash WITHOUT taking a backup?"):
+            print("Aborted."); return 1
+        if not confirm("Are you SURE? This cannot be undone without a backup."):
             print("Aborted."); return 1
     else:
         path = do_backup(args.port, args.baud, args.backup_dir)
         if path is None:
             return 1
+        print(f"\n*** IMPORTANT: keep {path} safe — it is the ONLY way back to")
+        print("*** stock. Copy it off this machine (cloud/USB) before continuing. ***")
 
     print("\n[2/3] Ready to flash OpenBreath.")
     if not confirm("Proceed with flashing?"):

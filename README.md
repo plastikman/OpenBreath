@@ -86,9 +86,19 @@ idf.py build
 ```
 
 ## Install & update
+
+> 🛑 **BACK UP YOUR DEVICE FIRST. THIS IS IRREVERSIBLE WITHOUT A BACKUP.**
+> Installing OpenBreath **overwrites the entire flash** and **erases the stock
+> firmware**. BIGTREETECH does **not** publish stock images, so **the full backup
+> you take is the ONLY way back to stock.** If you skip the backup (or lose the
+> file), there is **no going back** — you will be permanently on custom firmware.
+> `tools/flash.py` takes and verifies this backup automatically before writing;
+> **do not use `--no-backup`** unless you already have a known-good backup stored
+> somewhere safe. Copy the backup off your machine (cloud/USB) before flashing.
+
 **First install (stock → OpenBreath):** use the flasher, which backs up the
 *entire* stock flash to a timestamped image **before** writing anything, so you
-can always return to stock. Flashing is over the on-board CH340K USB-C bridge
+can return to stock. Flashing is over the on-board CH340K USB-C bridge
 (native USB is unavailable — GPIO18 is the SSR):
 ```bash
 python3 tools/flash.py                 # backup stock, then flash OpenBreath
