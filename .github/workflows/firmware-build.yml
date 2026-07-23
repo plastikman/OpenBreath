@@ -19,23 +19,35 @@ on:
       - 'sdkconfig.defaults'
   workflow_dispatch:
 
+# Least-privilege GITHUB_TOKEN: the build only needs to read code and upload
+# artifacts (upload-artifact uses the Actions API, not `contents`).
+permissions:
+  contents: read
+
+# Supersede in-flight builds for the same ref (a push + open PR, or rapid
+# pushes) instead of running the ~2 min ESP-IDF build multiple times.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      # SHA-pinned (supply-chain); trailing comment tracks the human version.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           submodules: recursive
 
       - name: Build (ESP-IDF v5.3)
-        uses: espressif/esp-idf-ci-action@v1
+        uses: espressif/esp-idf-ci-action@9d38657f3d789ca759b2b37aaf5ceffbc42c4f0d # v1
         with:
           esp_idf_version: v5.3
           target: esp32c3
           path: '.'
 
       - name: Upload firmware artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: dragonbreath-firmware
           path: |
