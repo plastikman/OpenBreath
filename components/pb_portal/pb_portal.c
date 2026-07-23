@@ -7,6 +7,7 @@
 #include "esp_http_server.h"
 #include "esp_log.h"
 #include "esp_wifi.h"
+#include "esp_app_desc.h"
 #include "nvs.h"
 #include "lwip/inet.h"
 #include "cJSON.h"
@@ -166,8 +167,10 @@ static const char STATUS_BODY[] =
     " &middot; <a href='/fw'>Firmware update</a></small></p>"
     "<p style='text-align:center;margin-top:-6px'><small style='color:#6f6f6f'>"
     "Firmware update installs <b>OpenBreath</b> updates only \xE2\x80\x94 it does <b>not</b> "
-    "restore the stock Panda firmware.</small></p></div>"
+    "restore the stock Panda firmware.</small></p>"
+    "<div id=ver style='text-align:center;color:#5a5a5a;font-size:.72rem;margin-top:2px'></div></div>"
     "<script>" OB_AUTH_JS
+    "if(window.OB_VER)document.getElementById('ver').textContent='OpenBreath '+window.OB_VER;"
     // iOwn: did THIS tab start the current heat? We heartbeat ONLY then, so a
     // passive or freshly-reloaded dashboard (iOwn=false) never pets the comms
     // watchdog and therefore can't mask a Klippy/controller failure.
@@ -220,8 +223,10 @@ static const char FW_BODY[] =
     "<button type=button id=fwbtn class=go onclick='doUpdate()' disabled>Upload &amp; flash</button>"
     "<div id=fwmsg style='margin-top:.6em;word-break:break-all'><small>Turn the heater OFF first "
     "(updates are refused while heating). Do not power off during the update.</small></div></div>"
-    "<p style='text-align:center'><small><a href='/'>\xE2\x86\x90 Back to status</a></small></p></div>"
+    "<p style='text-align:center'><small><a href='/'>\xE2\x86\x90 Back to status</a></small></p>"
+    "<div id=ver style='text-align:center;color:#5a5a5a;font-size:.72rem;margin-top:2px'></div></div>"
     "<script>" OB_AUTH_JS
+    "if(window.OB_VER)document.getElementById('ver').textContent='OpenBreath '+window.OB_VER;"
     // Enable the flash button only once a file is chosen.
     "function fwsel(){document.getElementById('fwbtn').disabled=!document.getElementById('fw').files.length;}"
     // Stream the chosen .bin to /update with the auth header; device validates,
@@ -281,6 +286,16 @@ static void send_auth_inject(httpd_req_t *req)
         : "<script>window.OB_TOK=\"web\";</script>");
 }
 
+// Inject the firmware version (git tag for releases, short hash for PR/local) as
+// window.OB_VER so pages can show it. From the ESP app descriptor (see CMakeLists).
+static void send_version_inject(httpd_req_t *req)
+{
+    char b[128];
+    snprintf(b, sizeof b, "<script>window.OB_VER=\"%s\";</script>",
+             esp_app_get_description()->version);
+    SEND(req, b);
+}
+
 // ---- handlers ----
 // Live status dashboard (root in STA mode).
 static esp_err_t status_page(httpd_req_t *req)
@@ -288,6 +303,7 @@ static esp_err_t status_page(httpd_req_t *req)
     httpd_resp_set_type(req, "text/html; charset=utf-8");
     SEND(req, PAGE_HEAD);
     send_auth_inject(req);
+    send_version_inject(req);
     SEND(req, STATUS_BODY);
     return httpd_resp_send_chunk(req, NULL, 0);
 }
@@ -298,6 +314,7 @@ static esp_err_t fw_page(httpd_req_t *req)
     httpd_resp_set_type(req, "text/html; charset=utf-8");
     SEND(req, PAGE_HEAD);
     send_auth_inject(req);
+    send_version_inject(req);
     SEND(req, FW_BODY);
     return httpd_resp_send_chunk(req, NULL, 0);
 }

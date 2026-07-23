@@ -105,6 +105,7 @@ static esp_err_t status_get(httpd_req_t *req)
     if (fr) cJSON_AddStringToObject(o, "fault_reason", fr);
     else    cJSON_AddNullToObject(o, "fault_reason");
     add_num1(o, "max", PB_HEATER_MAX_TARGET_C);
+    cJSON_AddStringToObject(o, "version", esp_app_get_description()->version);
 
     char *out = cJSON_PrintUnformatted(o);
     httpd_resp_set_type(req, "application/json");
