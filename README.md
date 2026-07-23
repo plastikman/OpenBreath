@@ -27,9 +27,11 @@ re-implemented.
 | `pb_fan` | ✅ TRIAC **on/off held-gate** (stock model — the gate is never PWM'd/phase-chopped) |
 | `pb_policy` | ✅ Authoritative mode/target/lease state machine |
 | Network core: `pv_wifi` / `pv_evlog` / `pv_moonraker` | ✅ Referenced from OpenVent (submodule); WiFi + Moonraker validated on hardware |
-| Portal / status dashboard / heat LED | 🚧 Captive provisioning validated; API v2 dashboard awaits hardware validation |
-| HTTP control API (`pb_httpd`) | 🚧 API v2 JSON command/state + SSE; CSRF-gated mutations |
-| Klipper-side helper (M141 / Fluidd) | 🚧 [dragonbreath-klipper](https://github.com/plastikman/dragonbreath-klipper) must migrate from the removed alpha API to v2 |
+| Portal / status dashboard | ✅ Captive provisioning + v2 dashboard (manual / auto / dry / advanced cards, SSE-driven) |
+| Status LEDs (`pb_leds`) | ✅ On + Power (GPIO21) heat/fault indicators, **hardware-validated**; matches stock (Power on GPIO21 is a release-build option — it shares the console-TX pin) |
+| HTTP control API (`pb_httpd`) | ✅ API v2 (JSON command/state + SSE, CSRF-gated) — shipped in v0.3.0 |
+| Klipper-side helper (M141 / Fluidd) | ✅ [dragonbreath-klipper](https://github.com/plastikman/dragonbreath-klipper) migrated to API v2; deploy lockstep with firmware ≥ v0.3.0 |
+| Auto (follow-bed) / filament-dry modes | 🚧 Shipped in the state machine + UI (v0.3.0); end-to-end hardware soak in progress |
 | Flasher (`tools/flash.py`) | ✅ Backs up full stock flash first, then flashes; `--restore` returns to stock |
 | Web OTA update | ✅ Dual-OTA + rollback; upload from the UI, verified on hardware (DragonBreath-only, refused while heating) |
 
