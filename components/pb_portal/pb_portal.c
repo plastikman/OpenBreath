@@ -133,7 +133,7 @@ static const char PAGE_HEAD[] =
     "button:disabled{opacity:.4;cursor:not-allowed}"
     ".srow{display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid rgba(255,255,255,.07)}.srow:last-child{border:0}"
     "small{color:#8a8a8a}a{color:#4aa3ff}</style></head><body>"
-    "<div class=hdr><h1>\xF0\x9F\x90\xBC DragonBreath</h1><p>Panda Breath</p></div>"
+    "<div class=hdr><h1>\xF0\x9F\x90\x89 DragonBreath</h1></div>"
     "<div class=wrap>";
 
 // Wi-Fi form card (config page).
