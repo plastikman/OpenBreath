@@ -210,6 +210,7 @@ static const char STATUS_BODY[] =
 // Dedicated firmware-update page (GET /fw) — DragonBreath OTA only, its own page so
 // it isn't mixed in with Wi-Fi/printer setup.
 static const char FW_BODY[] =
+    "<div id=upd class=card style='display:none;background:#1f3a2a;color:#c9ffe0'></div>"
     "<div class=card><h2>Firmware update</h2>"
     "<p style='margin:.2em 0 .7em;font-size:.85rem;color:#bdbdbd'>Installs an "
     "<b>DragonBreath</b> firmware update (upload <code>dragonbreath.bin</code>). The "
@@ -245,6 +246,27 @@ static const char FW_BODY[] =
     "else{m.innerHTML='<small>Update failed: '+((x.j&&x.j.error)||('HTTP '+x.s))+'</small>';}})"
     ".catch(function(){m.innerHTML='<small>Connection lost \\u2014 if it was flashing, "
     "the device is rebooting into the new firmware.</small>';});}"
+    // Update check (Flow A): only on OFFICIAL builds (clean vX.Y.Z), ask GitHub for
+    // the latest release; if newer, show a download link + expected SHA-256. The
+    // browser can't read release-asset bytes (no CORS), so the user downloads then
+    // flashes via the picker above. Fails silent on dev builds / offline / errors.
+    "(function(){var REPO='plastikman/DragonBreath',cur=window.DB_VER||'';"
+    "var m=/^v?(\\d+)\\.(\\d+)\\.(\\d+)$/.exec(cur);if(!m)return;"
+    "var c=[+m[1],+m[2],+m[3]];"
+    "fetch('https://api.github.com/repos/'+REPO+'/releases/latest')"
+    ".then(function(r){return r.ok?r.json():null;}).then(function(d){"
+    "if(!d||!d.tag_name)return;var l=/^v?(\\d+)\\.(\\d+)\\.(\\d+)/.exec(d.tag_name);if(!l)return;"
+    "var n=[+l[1],+l[2],+l[3]];"
+    "if(!(n[0]>c[0]||(n[0]==c[0]&&(n[1]>c[1]||(n[1]==c[1]&&n[2]>c[2])))))return;"
+    "var a=(d.assets||[]).filter(function(x){return /^dragonbreath-.*\\.bin$/.test(x.name)&&x.name.indexOf('factory')<0;})[0];"
+    "var sha=a&&a.digest?a.digest.replace('sha256:',''):'';"
+    "var e=document.getElementById('upd');"
+    "e.innerHTML='<b>\\uD83D\\uDC09 DragonBreath '+d.tag_name+' available</b> (you\\u2019re on '+cur+'). '"
+    "+(a?'<a href='+a.browser_download_url+' target=_blank rel=noopener>Download '+a.name+'</a> \\u00b7 ':'')"
+    "+'<a href='+d.html_url+' target=_blank rel=noopener>release notes</a>'"
+    "+(sha?'<br><small>Expected SHA-256: <code>'+sha+'</code> \\u2014 verify your download, then flash it above.</small>'"
+    ":'<br><small>Download it, then flash it above.</small>');"
+    "e.style.display='block';}).catch(function(){});})();"
     "</script></body></html>";
 
 static const char PAGE_TAIL[] =
