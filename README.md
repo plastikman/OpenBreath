@@ -47,14 +47,16 @@ LED / button UI — stays in this repo.
 
 ## Screenshots
 <p>
-<img src="docs/screenshots/dashboard.png" width="250" alt="Live status dashboard">
-<img src="docs/screenshots/setup.png" width="250" alt="Wi-Fi / printer setup">
-<img src="docs/screenshots/firmware-update.png" width="250" alt="OTA firmware update">
+<img src="docs/screenshots/dashboard.png" width="220" alt="Live status dashboard">
+<img src="docs/screenshots/setup.png" width="220" alt="Wi-Fi / printer setup">
+<img src="docs/screenshots/firmware-update.png" width="220" alt="OTA firmware update">
+<img src="docs/screenshots/update-available.png" width="220" alt="In-UI update notification">
 </p>
 
 Left → right: the live status dashboard, Wi-Fi / printer setup (captive portal),
-and the DragonBreath-only OTA firmware-update page. Served by the device itself over
-plain HTTP on your LAN.
+the DragonBreath-only OTA firmware-update page, and the in-UI update notification
+(shown on official builds when a newer release is available). Served by the device
+itself over plain HTTP on your LAN.
 
 ## Hardware
 ESP32-C3-MINI-1, mains PSU, PTC heater via SSR (GPIO18), ~220 VAC blower switched
