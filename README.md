@@ -18,6 +18,10 @@ re-implemented.
 > this is community firmware with no warranty — read [`docs/SAFETY.md`](docs/SAFETY.md)
 > and supervise early runs.
 
+**Docs:** full feature set → [`docs/FEATURES.md`](docs/FEATURES.md) · control API →
+[`docs/api-v2.md`](docs/api-v2.md) · safety model → [`docs/SAFETY.md`](docs/SAFETY.md) ·
+hardware → [`docs/HARDWARE.md`](docs/HARDWARE.md).
+
 ## Status
 | Component | State |
 |---|---|

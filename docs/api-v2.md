@@ -152,3 +152,26 @@ state:
 Defined error codes include `invalid_command`, `unsupported_api_version`,
 `auth_failed`, `revision_conflict`, `stale_lease`, `fault_latched`,
 `inhibited`, and `busy`.
+
+## Other endpoints (not versioned)
+
+These predate/sit beside the versioned control surface and are stable:
+
+- `GET /settings` — the runtime-configurable safety settings plus their bounds:
+  `{"max","max_min","max_abs","comms_ms","comms_ms_min","comms_ms_max"}`. Open
+  (read-only, no side effects).
+- `POST /settings?max=<°C>&comms_ms=<ms>` — update either/both. Auth-gated
+  (`X-DragonBreath-Auth`). Values are clamped to the safe envelope server-side
+  (the max-target ceiling can never exceed the absolute cap, the comms watchdog
+  stays within its min/max) and the clamped effective values are echoed back.
+  The fixed 105 °C PTC / 85 °C chamber cutoffs are **not** settable.
+- `POST /update` — authenticated DragonBreath application-image OTA. Streams the
+  `.bin` into the inactive slot, verifies it (image checksum + `dragonbreath`
+  project identity — foreign images are rejected), reports the SHA-256 it
+  computed, sets it as the boot slot, and reboots. **Refused while the heater is
+  armed/on.** A bad image that crashes before the app marks itself healthy rolls
+  back on the next boot.
+
+The device also serves the captive-portal / dashboard HTML on `GET /` (and
+`/setup`, `/fw`, `/scan.json`, `POST /save`, `/rescan`) — the human web UI, not
+part of the machine control contract.
