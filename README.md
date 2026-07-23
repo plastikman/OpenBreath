@@ -25,11 +25,11 @@ re-implemented.
 | `pb_ntc` | ✅ Stock conversion ported; **hardware-validated** (reads chamber temp matching the printer) |
 | `pb_heater` | ✅ Bang-bang + full safety cutoffs; SSR confirmed, heat cycle validated on hardware |
 | `pb_fan` | ✅ TRIAC **on/off held-gate** (stock model — the gate is never PWM'd/phase-chopped) |
-| `pb_policy` | 🚧 Authoritative mode/target/lease state machine (API v2 foundation) |
+| `pb_policy` | ✅ Authoritative mode/target/lease state machine |
 | Network core: `pv_wifi` / `pv_evlog` / `pv_moonraker` | ✅ Referenced from OpenVent (submodule); WiFi + Moonraker validated on hardware |
-| Portal / status dashboard / heat LED | ✅ Breath-local; captive-portal provisioning + live dashboard validated |
-| HTTP control API (`pb_httpd`) | ✅ `/status` `/target` `/heartbeat` `/reset`; CSRF-gated mutations |
-| Klipper-side helper (M141 / Fluidd) | ✅ [dragonbreath-klipper](https://github.com/plastikman/dragonbreath-klipper) — HTTP transport, M141/M191, Fluidd chamber card |
+| Portal / status dashboard / heat LED | 🚧 Captive provisioning validated; API v2 dashboard awaits hardware validation |
+| HTTP control API (`pb_httpd`) | 🚧 API v2 JSON command/state + SSE; CSRF-gated mutations |
+| Klipper-side helper (M141 / Fluidd) | 🚧 [dragonbreath-klipper](https://github.com/plastikman/dragonbreath-klipper) must migrate from the removed alpha API to v2 |
 | Flasher (`tools/flash.py`) | ✅ Backs up full stock flash first, then flashes; `--restore` returns to stock |
 | Web OTA update | ✅ Dual-OTA + rollback; upload from the UI, verified on hardware (DragonBreath-only, refused while heating) |
 
@@ -65,14 +65,23 @@ firmware can *guarantee* the absence of a fault; read [`docs/SAFETY.md`](docs/SA
 before touching heater code and supervise the device.
 
 ## Control API & access
-`pb_httpd` exposes a small HTTP API on port 80:
+`pb_httpd` exposes the versioned HTTP/JSON API on port 80:
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET  | `/status` | read-only JSON (temps, target, heating, fault) — **no** side effects |
-| POST | `/target?t=<C>` | set chamber setpoint (0 = off); also counts as liveness |
-| POST | `/heartbeat` | controller liveness only (pet the comms watchdog) |
-| POST | `/reset` | clear a latched safety fault |
+| GET | `/api/v2/info` | device identity, boot identity, firmware and capabilities |
+| GET | `/api/v2/state` | complete authoritative state snapshot — **no** side effects |
+| GET | `/api/v2/events` | SSE stream of state transitions and telemetry snapshots |
+| GET | `/api/v2/health` | uptime, heap, Wi-Fi signal/channel, SSE client count |
+| POST | `/api/v2/command` | revision-aware OFF/POWER_ON/AUTO/DRYING/fault-clear command |
+| POST | `/api/v2/heartbeat` | refresh exactly the device-issued active lease |
+| POST | `/update` | authenticated DragonBreath app-image OTA; refused while heating |
+
+The alpha `/status`, `/target`, `/heartbeat`, and `/reset` routes are removed.
+Remote POWER_ON returns a device-issued lease; only an exact lease heartbeat can
+keep that session alive. Stale revisions cannot overwrite newer control state,
+while OFF is intentionally unconditional. See [`docs/api-v2.md`](docs/api-v2.md)
+for the wire contract.
 
 Every **mutating** endpoint (and the portal's STA-mode `/save`) requires a custom
 `X-DragonBreath-Auth` header. A cross-origin HTML form can't set a custom header and

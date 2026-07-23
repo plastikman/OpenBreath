@@ -1,21 +1,22 @@
 // SPDX-License-Identifier: MIT
-// pb_httpd — tiny HTTP control API so a Klipper-side helper can surface the
-// chamber in Fluidd (temp + settable target) and map M141/M191 to DragonBreath.
+// pb_httpd — authoritative DragonBreath HTTP/JSON API v2.
 //
-//   GET  /status       -> {temp,ptc,target,heating,fault,max}  READ-ONLY, no side effects
-//   POST /target?t=<C> -> set chamber setpoint in C (0=off); also counts as liveness
-//   POST /heartbeat    -> controller liveness only (pet the comms watchdog)
-//   POST /reset        -> clear a latched safety fault (over-temp / sensor / comms)
+//   GET  /api/v2/info
+//   GET  /api/v2/state
+//   GET  /api/v2/events       Server-Sent Events: state + telemetry snapshots
+//   GET  /api/v2/health
+//   POST /api/v2/command      revision-aware mode/control command
+//   POST /api/v2/heartbeat    refresh exactly one device-issued lease
 //
-// Liveness is explicit: the controller must POST /heartbeat (or /target)
-// regularly while it wants heat; if it stops, the heater comms-watchdog latches
-// off. GET /status never feeds the watchdog. Start after WiFi is up.
+// The alpha /status, /target, /heartbeat, and /reset contract is deliberately
+// removed. Read-only requests have no control side effects. A remote POWER_ON
+// session stays alive only when its exact device-issued lease is heartbeated.
 //
-// CSRF / control gate: every mutating endpoint (/target, /reset, /heartbeat, and
+// CSRF / control gate: every mutating endpoint (command, heartbeat, and
 // the portal's STA-mode /save) requires the custom header "X-DragonBreath-Auth".
 // A cross-origin HTML form cannot set a custom header and we never enable CORS,
 // so an ordinary drive-by page cannot command the heater or rewrite its Wi-Fi
-// config. GET /status stays open (read-only). This is CSRF hardening for a
+// config. Read-only API routes stay open. This is CSRF hardening for a
 // trusted LAN, not transport security.
 #pragma once
 #include "esp_err.h"

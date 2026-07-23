@@ -93,7 +93,7 @@ esp_err_t pb_heater_set_target_c(float target_c)
     if (r == ESP_OK)
         ESP_LOGI(TAG, "target set to %.1f C", target_c);
     else
-        ESP_LOGW(TAG, "target %.1f rejected: fault latched (POST /reset, then a fresh target)", target_c);
+        ESP_LOGW(TAG, "target %.1f rejected: fault latched (clear fault, then issue a fresh command)", target_c);
     return r;
 }
 

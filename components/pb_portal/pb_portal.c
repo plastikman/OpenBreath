@@ -146,8 +146,9 @@ static const char CONFIG_WIFI[] =
     "<button type=button id=eye onclick='togglePw()' aria-label='show password'>\xF0\x9F\x91\x81</button></div>"
     "<button type=button class=sec onclick='rescan()'>Rescan networks</button></div>";
 
-// Live status dashboard (STA root). Polls /status every 2s; can set the target,
-// turn off, and clear a fault. Links to /setup for Wi-Fi/printer config.
+// Live status dashboard (STA root). API v2 state arrives over SSE; a serialized,
+// backoff-controlled poll is used only when an event stream cannot be held.
+// This tab heartbeats only the exact lease returned by its own POWER_ON command.
 static const char STATUS_BODY[] =
     "<div id=fault class=card style='display:none;background:#5a1f1f;color:#ffd7d7'></div>"
     "<div class=card style='text-align:center'>"
@@ -155,14 +156,25 @@ static const char STATUS_BODY[] =
     "<div id=temp style='font-size:3rem;font-weight:700;color:var(--accent);line-height:1.15'>--</div>"
     "<div id=cstat style='font-size:.75rem;color:#8a8a8a'></div></div>"
     "<div class=card>"
+    "<div class=srow><span>Mode</span><b id=mode>--</b></div>"
     "<div class=srow><span>Target</span><b id=target>--</b></div>"
     "<div class=srow><span>Heating</span><b id=heating>--</b></div>"
-    "<div class=srow><span>Element (PTC)</span><b id=ptc>--</b></div></div>"
-    "<div class=card><label>Set chamber target (&deg;C, 0 = off)</label>"
-    "<div class=pw><input id=tin type=number min=0 max=70 step=1 value=45>"
-    "<button type=button class=go style='width:auto;margin:0;padding:12px 18px' onclick='setT()'>Set</button></div>"
+    "<div class=srow><span>Fan</span><b id=fan>--</b></div>"
+    "<div class=srow><span>Element (PTC)</span><b id=ptc>--</b></div>"
+    "<div class=srow><span>Controller</span><b id=owner>--</b></div>"
+    "<div class=srow><span>Link</span><b id=link>--</b></div></div>"
+    "<div class=card><h2>Manual heat</h2><label>Chamber target (&deg;C)</label>"
+    "<div class=pw><input id=tin type=number min=0 step=1 value=45>"
+    "<button type=button class=go style='width:auto;margin:0;padding:12px 18px' onclick='powerOn()'>Start</button></div>"
     "<button type=button id=off class=sec onclick='setOff()' disabled>Turn heater off</button>"
     "<button type=button class=sec id=rst style='display:none' onclick='doReset()'>Clear fault</button></div>"
+    "<div class=card><h2>Automatic</h2><label>Bed threshold (&deg;C)</label>"
+    "<input id=bed type=number min=0 max=150 step=1 value=60>"
+    "<button type=button class=sec onclick='setAuto()'>Follow printer bed</button></div>"
+    "<div class=card><h2>Filament drying</h2><label>Duration (hours)</label>"
+    "<input id=hours type=number min=1 max=12 step=1 value=4>"
+    "<button type=button class=sec onclick='dryStart()'>Start drying</button>"
+    "<button type=button class=sec onclick='dryStop()'>Stop drying</button></div>"
     "<div class=card><h2>Advanced / Safety</h2>"
     "<label>Max target ceiling (&deg;C)</label><input id=smax type=number step=1>"
     "<label>Comms watchdog (s) &mdash; heater latches off if the controller goes silent</label>"
@@ -177,43 +189,70 @@ static const char STATUS_BODY[] =
     "<div id=ver style='text-align:center;color:#5a5a5a;font-size:.72rem;margin-top:2px'></div></div>"
     "<script>" DB_AUTH_JS
     "if(window.DB_VER)document.getElementById('ver').textContent='DragonBreath '+window.DB_VER;"
-    // iOwn: did THIS tab start the current heat? We heartbeat ONLY then, so a
-    // passive or freshly-reloaded dashboard (iOwn=false) never pets the comms
-    // watchdog and therefore can't mask a Klippy/controller failure.
-    "var iOwn=false;"
+    "var rev=0,lease=null,last=null,polling=false,pollDelay=2000;"
+    "var actor=sessionStorage.getItem('db_actor');"
+    "if(!actor){actor='web-'+Math.random().toString(16).slice(2);sessionStorage.setItem('db_actor',actor);}"
+    "function rid(){return self.crypto&&crypto.randomUUID?crypto.randomUUID():Date.now()+'-'+Math.random();}"
     "function u(i,v){document.getElementById(i).textContent=v;}"
-    "function refresh(){fetch('/status').then(function(r){return r.json();}).then(function(s){"
-    "u('temp',s.temp==null?'--':s.temp.toFixed(1)+'\\u00b0C');"
-    "u('ptc',s.ptc==null?'--':s.ptc.toFixed(1)+'\\u00b0C'+(s.ptc_status!='ok'?' ('+s.ptc_status+')':''));"
-    "u('target',s.target?s.target.toFixed(0)+'\\u00b0C':'off');"
-    // Reflect the live target (e.g. one set by Klipper) in the set-temp box, but
-    // never while the user is typing in it. Keep the last value when off.
+    "function deg(v){return v==null?'--':Number(v).toFixed(1)+'\\u00b0C';}"
+    "function apply(s){if(!s||s.api_version!==2)return;"
+    "if(last&&s.boot_id===last.boot_id&&s.state_revision<rev)return;"
+    "if(last&&s.boot_id!==last.boot_id)lease=null;last=s;rev=s.state_revision;"
+    "var c=s.sensors.chamber,p=s.sensors.ptc,l=s.control.lease;"
+    "u('temp',deg(c.temperature_c));u('cstat',c.status==='ok'?'':'sensor: '+c.status);"
+    "u('ptc',deg(p.temperature_c)+(p.status==='ok'?'':' ('+p.status+')'));"
+    "u('mode',s.mode);u('target',s.target.effective_c>0?deg(s.target.effective_c):'off');"
+    "u('heating',s.heater.output?'ON':(s.heater.demand?'waiting':'off'));"
+    "u('fan',s.fan.effective_percent+'% ('+s.fan.reason+')');"
+    "u('owner',l.active?(l.owner||'remote'):(s.source||'--'));"
+    "u('link',s.environment.moonraker_connected?'Moonraker online':'Moonraker offline');"
     "var tin=document.getElementById('tin');"
-    "if(s.max)tin.max=Math.round(s.max);"          // slider ceiling tracks the configured max
-    "if(document.activeElement!==tin&&s.target>0){tin.value=Math.round(s.target);}"
-    "u('heating',s.heating?'ON':'off');"
-    "var ob=document.getElementById('off');var on=s.target>0;ob.disabled=!on;"
+    "if(s.target.maximum_c!=null)tin.max=Math.round(s.target.maximum_c);"
+    "if(document.activeElement!==tin&&s.target.requested_c>0)tin.value=Math.round(s.target.requested_c);"
+    "var ob=document.getElementById('off'),on=s.mode!=='off';ob.disabled=!on;"
     "ob.style.background=on?'var(--accent)':'';ob.style.color=on?'#fff':'';ob.style.borderColor=on?'var(--accent)':'';"
-    "u('cstat',s.chamber_status=='ok'?'':'sensor: '+s.chamber_status);"
-    "if(!(s.target>0))iOwn=false;"          // heat is off -> nobody's lease, incl. ours
-    // Heartbeat lease — only for heat THIS tab started. Close the tab (or never
-    // having started it) lets the 5-min watchdog latch the heater off (fail-safe).
-    "if(iOwn&&s.target>0){fetch('/heartbeat',{method:'POST',headers:hdr()}).catch(function(){});}"
     "var f=document.getElementById('fault'),rb=document.getElementById('rst');"
-    "if(s.fault){f.style.display='block';f.textContent='\\u26a0 Fault: '+(s.fault_reason||'')+' (fix, then Clear fault)';rb.style.display='block';}"
+    "if(s.safety.fault_latched||s.safety.inhibited){f.style.display='block';"
+    "f.textContent='\\u26a0 '+(s.safety.inhibited?'Inhibited: ':'Fault: ')+(s.safety.reason||'unknown');"
+    "rb.style.display=s.safety.inhibited?'none':'block';}"
     "else{f.style.display='none';rb.style.display='none';}"
-    "}).catch(function(){});}"
-    // Take ownership ONLY after the device accepts a positive target (HTTP ok).
-    // A rejected/failed request must NOT leave this tab thinking it owns heat, or
-    // it could later heartbeat a target another controller set.
-    "function setT(){var v=document.getElementById('tin').value;var pos=parseFloat(v)>0;"
-    "post('/target?t='+encodeURIComponent(v)).then(function(r){iOwn=!!(r&&r.ok&&pos);refresh();})"
-    ".catch(function(){iOwn=false;refresh();});}"
-    "function setOff(){iOwn=false;post('/target?t=0').then(refresh);}"
-    "function doReset(){post('/reset').then(refresh);}"
-    // Advanced/Safety: load current settings + their bounds from /settings, and
-    // save edits back. The device clamps everything (ceiling <= 70 C, timeout
-    // 10s-5min), so out-of-range entries come back corrected.
+    // A passive/reloaded tab has lease=null. If another controller supersedes
+    // our lease, the next authoritative snapshot immediately stops heartbeats.
+    "if(!l.active||!lease||l.owner!==actor)lease=null;"
+    "}"
+    "function request(path,body){var h=hdr();h['Content-Type']='application/json';"
+    "return fetch(path,{method:'POST',headers:h,body:JSON.stringify(body)}).then(function(r){"
+    "return r.json().catch(function(){return{};}).then(function(j){"
+    "if(r.status===403){localStorage.removeItem('db_tok');alert('Control token rejected.');}"
+    "if(j.state)apply(j.state);if(!r.ok)throw j;return j;});});}"
+    "function command(name,fields){var b={api_version:2,request_id:rid(),expected_revision:rev,"
+    "actor:{kind:'web',id:actor},command:{name:name}};"
+    "Object.keys(fields||{}).forEach(function(k){b.command[k]=fields[k];});"
+    "return request('/api/v2/command',b);}"
+    "function powerOn(){lease=null;command('power_on',{target_c:+document.getElementById('tin').value})"
+    ".then(function(r){lease=r.lease_id||null;if(r.state)apply(r.state);})"
+    ".catch(function(){lease=null;});}"
+    "function setOff(){lease=null;command('off',{}).catch(function(){});}"
+    "function setAuto(){lease=null;command('auto',{target_c:+document.getElementById('tin').value,"
+    "bed_threshold_c:+document.getElementById('bed').value}).catch(function(){});}"
+    "function dryStart(){lease=null;command('drying_start',{target_c:+document.getElementById('tin').value,"
+    "hours:+document.getElementById('hours').value}).catch(function(){});}"
+    "function dryStop(){lease=null;command('drying_stop',{}).catch(function(){});}"
+    "function doReset(){lease=null;command('clear_fault',{}).catch(function(){});}"
+    "function heartbeat(){if(!lease||!last||last.mode!=='power_on')return;"
+    "request('/api/v2/heartbeat',{api_version:2,lease_id:lease}).catch(function(){lease=null;});}"
+    // Polling fallback is serialized: schedule the next request only after the
+    // current request settles, with bounded backoff on failure.
+    "function poll(){if(polling)return;polling=true;fetch('/api/v2/state',{cache:'no-store'})"
+    ".then(function(r){if(!r.ok)throw 0;return r.json();}).then(function(s){apply(s);pollDelay=2000;})"
+    ".catch(function(){pollDelay=Math.min(10000,Math.round(pollDelay*1.6));})"
+    ".finally(function(){polling=false;setTimeout(poll,pollDelay+Math.random()*250);});}"
+    "function events(){var es=new EventSource('/api/v2/events');var seen=false;"
+    "function ev(e){seen=true;try{apply(JSON.parse(e.data));}catch(_){}}"
+    "es.addEventListener('state',ev);es.addEventListener('telemetry',ev);"
+    "es.onerror=function(){es.close();if(!seen)poll();else setTimeout(poll,1000);};}"
+    // Advanced/Safety remains the persisted configuration surface until a
+    // dedicated v2 settings route is introduced.
     "function loadSettings(){fetch('/settings').then(function(r){return r.json();}).then(function(s){"
     "var mx=document.getElementById('smax');mx.min=s.max_min;mx.max=s.max_abs;"
     "if(document.activeElement!==mx)mx.value=Math.round(s.max);"
@@ -227,10 +266,10 @@ static const char STATUS_BODY[] =
     ".then(function(r){return r.json().then(function(j){return{s:r.status,j:j};})"
     ".catch(function(){return{s:r.status,j:{}};});})"
     ".then(function(x){if(x.s==200){m.innerHTML='<small>Saved \\u2713 (max '+x.j.max+'\\u00b0C, timeout '"
-    "+Math.round(x.j.comms_ms/1000)+'s)</small>';loadSettings();refresh();}"
+    "+Math.round(x.j.comms_ms/1000)+'s)</small>';loadSettings();}"
     "else{m.innerHTML='<small>Save failed: '+((x.j&&x.j.error)||('HTTP '+x.s))+'</small>';}})"
     ".catch(function(){m.innerHTML='<small>Save failed (connection).</small>';});}"
-    "refresh();setInterval(refresh,2000);loadSettings();"
+    "events();setInterval(heartbeat,30000);loadSettings();"
     "</script></body></html>";
 
 // Dedicated firmware-update page (GET /fw) — DragonBreath OTA only, its own page so

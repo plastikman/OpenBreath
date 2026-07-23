@@ -187,14 +187,15 @@ restores its inhibited state, never its prior target.
 **B7. API v2 (breaking alpha change).**
 - Introduce an explicit API version and structured JSON state/command documents.
   Exact paths may be finalized during implementation, but provide equivalents
-  of `GET state`, `POST command`, `POST heartbeat`, and `GET events`.
+  of `GET state`, `POST command`, `POST heartbeat`, and `GET events`. The
+  finalized routes and schemas are documented in `docs/api-v2.md`.
 - Command responses return the resulting authoritative snapshot/revision, not
   only `{"ok":true}`. Rejections include machine-readable fault, inhibit,
   version, validation, or stale-lease reasons.
 - Provide a device-originated SSE or WebSocket event stream; polling remains a
   recovery fallback.
 - `"set target" > 0` maps to POWER_ON and zero maps to OFF.
-- Update firmware, dashboard, and openbreath-klipper together. Require a
+- Update firmware, dashboard, and dragonbreath-klipper together. Require a
   firmware/helper version handshake and fail clearly on incompatibility. There
   is no obligation to preserve the current query-parameter alpha API.
 - User-facing precedence may remain last-writer-wins, but a stale writer must
@@ -243,7 +244,7 @@ panic-off is live ASAP. `pb_policy` REQUIRES += `pb_buttons pv_evlog`.
 3. K3 polarity end-to-end (idle 1 / pressed 0; else flip `active_low`).
 4. LEDs light on **high**; toggling GPIO4/5 does **not** perturb chamber/PTC temps, the ZCD count, or the GPIO2 read; GPIO6 heat LED still works after ownership moved to pb_leds.
 5. Press detection: exactly one SHORT on release; one LONG at threshold, no trailing short.
-6. Safety regression while heating: button/LED activity causes no spurious sensor-fault trips, ZCD keeps counting; long-press drops the SSR ≤1 tick and latches (`fault:true` in `/status`).
+6. Safety regression while heating: button/LED activity causes no spurious sensor-fault trips, ZCD keeps counting; long-press drops the SSR ≤1 tick and latches (`safety.fault_latched:true` in `/api/v2/state`).
 7. Remote-control regression: while heating from dashboard/Klipper, a K3 action invalidates the lease, updates both observers, and stale heartbeats/reconnects do not restore heat.
 8. Persistent-fault regression: power-cycle after a latched fault → heater OFF, fan ON, commands rejected until a deliberate valid clear.
 

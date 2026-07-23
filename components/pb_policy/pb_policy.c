@@ -306,38 +306,16 @@ pb_policy_result_t pb_policy_heartbeat(const pb_policy_lease_t *lease)
     return PB_POLICY_OK;
 }
 
-pb_policy_result_t pb_policy_heartbeat_legacy(void)
-{
-    // Transitional adapter for the alpha /heartbeat route.  API v2 removes this
-    // capability and requires the device-issued lease ID on every heartbeat.
-    if (!s_lock) return PB_POLICY_STALE_LEASE;
-    xSemaphoreTake(s_lock, portMAX_DELAY);
-    // The deployed alpha helper heartbeats even while idle. Keep that harmless
-    // during the v1->v2 transition, but never let it revive a missing/expired
-    // POWER_ON lease.
-    if (s.mode != PB_MODE_POWER_ON) {
-        xSemaphoreGive(s_lock);
-        return PB_POLICY_OK;
-    }
-    if (!s.lease_active) {
-        xSemaphoreGive(s_lock);
-        return PB_POLICY_STALE_LEASE;
-    }
-    int64_t now = esp_timer_get_time();
-    if (now >= s.lease_deadline_us) {
-        xSemaphoreGive(s_lock);
-        return PB_POLICY_STALE_LEASE;
-    }
-    s.lease_deadline_us = now + remote_lease_ttl_us();
-    pb_heater_notify_link_alive();
-    xSemaphoreGive(s_lock);
-    return PB_POLICY_OK;
-}
-
-pb_policy_result_t pb_policy_clear_fault(pb_source_t source)
+pb_policy_result_t pb_policy_clear_fault(
+    pb_source_t source,
+    uint32_t expected_revision)
 {
     if (!s_lock) return PB_POLICY_INHIBITED;
     xSemaphoreTake(s_lock, portMAX_DELAY);
+    if (!revision_matches_locked(expected_revision)) {
+        xSemaphoreGive(s_lock);
+        return PB_POLICY_REVISION_CONFLICT;
+    }
     if (pb_heater_is_inhibited()) {
         xSemaphoreGive(s_lock);
         return PB_POLICY_INHIBITED;

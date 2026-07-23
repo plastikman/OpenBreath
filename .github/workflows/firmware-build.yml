@@ -44,6 +44,11 @@ jobs:
       - name: Test authoritative policy state machine
         run: sh tests/run_policy_host_test.sh
 
+      - name: Check API v2 contract and dashboard ownership
+        run: |
+          sh tests/check_api_v2_contract.sh
+          node tests/check_dashboard_js.mjs
+
       - name: Build (ESP-IDF v5.3)
         uses: espressif/esp-idf-ci-action@9d38657f3d789ca759b2b37aaf5ceffbc42c4f0d # v1
         with:

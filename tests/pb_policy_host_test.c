@@ -284,14 +284,6 @@ static void test_runtime_limits_drive_auto_and_remote_lease(void)
     CHECK(snapshot().fault_latched);
 }
 
-static void test_legacy_idle_heartbeat_is_benign(void)
-{
-    reset_fixture();
-    CHECK(pb_policy_heartbeat_legacy() == PB_POLICY_OK);
-    CHECK(heater_link_pets == 0);
-    CHECK(snapshot().mode == PB_MODE_OFF);
-}
-
 static void test_local_power_limit_expires_off_without_fault(void)
 {
     reset_fixture();
@@ -341,12 +333,30 @@ static void test_external_fault_sync_off_and_clear(void)
     CHECK(snap.effective_target_c == 0.0f);
     CHECK(snap.fault_latched);
 
-    CHECK(pb_policy_clear_fault(PB_SOURCE_WEB) == PB_POLICY_OK);
+    uint32_t clear_revision = snap.state_revision;
+    CHECK(pb_policy_clear_fault(
+        PB_SOURCE_WEB, clear_revision + 1) == PB_POLICY_REVISION_CONFLICT);
+    CHECK(pb_policy_clear_fault(
+        PB_SOURCE_WEB, clear_revision) == PB_POLICY_OK);
     snap = snapshot();
     CHECK(snap.mode == PB_MODE_OFF);
     CHECK(snap.source == PB_SOURCE_WEB);
     CHECK(!snap.fault_latched);
     CHECK(snap.effective_target_c == 0.0f);
+}
+
+static void test_fault_clear_requires_current_revision(void)
+{
+    reset_fixture();
+    heater_fault = true;
+    heater_reason = "test fault";
+    pb_policy_snapshot_t snap = snapshot();
+    CHECK(pb_policy_clear_fault(
+        PB_SOURCE_WEB, snap.state_revision + 1) == PB_POLICY_REVISION_CONFLICT);
+    CHECK(heater_fault);
+    CHECK(pb_policy_clear_fault(
+        PB_SOURCE_WEB, snap.state_revision) == PB_POLICY_OK);
+    CHECK(!heater_fault);
 }
 
 int main(void)
@@ -358,9 +368,9 @@ int main(void)
     test_auto_requires_live_moonraker_and_uses_hysteresis();
     test_drying_is_bounded_and_expires_off();
     test_runtime_limits_drive_auto_and_remote_lease();
-    test_legacy_idle_heartbeat_is_benign();
     test_local_power_limit_expires_off_without_fault();
     test_external_fault_sync_off_and_clear();
+    test_fault_clear_requires_current_revision();
     puts("pb_policy host tests: PASS");
     return 0;
 }

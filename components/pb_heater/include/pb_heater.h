@@ -35,7 +35,8 @@
 // request heat. Idempotent.
 esp_err_t pb_heater_init(void);
 
-// Set the desired chamber temperature (clamped to [0, PB_HEATER_MAX_TARGET_C]).
+// Set the desired chamber temperature (clamped to the runtime ceiling returned
+// by pb_heater_get_max_target_c(), never above PB_HEATER_ABS_MAX_TARGET_C).
 // 0 (or below) disables heating. Returns:
 //   ESP_OK             - accepted
 //   ESP_ERR_INVALID_ARG   - non-finite (NaN/Inf) target, rejected
@@ -61,7 +62,7 @@ uint32_t  pb_heater_get_comms_timeout_ms(void);
 
 // Feed the comms watchdog: call whenever a live controller link is confirmed
 // (Moonraker connected, or a fresh command). If not called within
-// PB_HEATER_COMMS_TIMEOUT_MS while heating, the heater latches off.
+// pb_heater_get_comms_timeout_ms() while heating, the heater latches off.
 void pb_heater_notify_link_alive(void);
 
 // Periodic control tick (call at ~1-2 Hz). Reads chamber + PTC temps, enforces
@@ -79,10 +80,10 @@ void pb_heater_emergency_off(const char *reason);
 void pb_heater_clear_fault(void);
 
 // PERMANENT inhibit: force the heater off and refuse all heat until reboot. Unlike
-// a latched fault this is NOT clearable by pb_heater_clear_fault()/POST /reset —
+// a latched fault this is NOT clearable by pb_heater_clear_fault()/API clear_fault —
 // only a power cycle lifts it. Use for conditions under which the heater must
 // never run again this boot (e.g. the control-loop watchdog could not be armed,
-// so a hung loop would go undetected). Reports as a fault in /status.
+// so a hung loop would go undetected). Reports as a fault in API v2 state.
 void pb_heater_inhibit(const char *reason);
 
 // True once pb_heater_inhibit() has been called (reboot-only).

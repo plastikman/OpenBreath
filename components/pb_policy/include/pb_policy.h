@@ -121,11 +121,15 @@ void pb_policy_stop_drying(pb_source_t source);
 void pb_policy_set_env(float bed_c, bool moonraker_connected);
 
 // Refresh exactly the active lease.  A stale/superseded lease cannot keep heat
-// alive.  The legacy helper exists only until API v2 replaces the alpha routes.
+// alive.
 pb_policy_result_t pb_policy_heartbeat(const pb_policy_lease_t *lease);
-pb_policy_result_t pb_policy_heartbeat_legacy(void);
 
-pb_policy_result_t pb_policy_clear_fault(pb_source_t source);
+// Clearing a fault changes authoritative state and therefore requires the
+// caller's observed revision. Unlike OFF, stale state must not clear a newer
+// fault or safety transition.
+pb_policy_result_t pb_policy_clear_fault(
+    pb_source_t source,
+    uint32_t expected_revision);
 
 // Periodic control tick (call at ~1-2 Hz).  Computes the effective target,
 // applies the heater/fan outputs, enforces deadlines, and synchronizes safety

@@ -160,7 +160,7 @@ static void control_task(void *arg)
     if (!wdt_armed) {
         // Fail closed: without watchdog coverage a hung control loop could leave
         // the SSR energized undetected, so refuse to heat for the rest of this
-        // boot. This is a PERMANENT inhibit — POST /reset cannot clear it (unlike
+        // boot. This is a PERMANENT inhibit — API clear_fault cannot clear it (unlike
         // a normal fault); only a power cycle (which re-attempts enrollment) can.
         ESP_LOGE(TAG, "task WDT subscribe FAILED — inhibiting heat (reboot required)");
         pb_heater_inhibit("task watchdog unavailable");
