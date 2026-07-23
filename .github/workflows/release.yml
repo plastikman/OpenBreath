@@ -62,14 +62,16 @@ jobs:
           VERSION: ${{ steps.ver.outputs.version }}
           IS_TAG: ${{ github.ref_type == 'tag' }}
         run: |
-          notes="$(cat <<EOF
-          DragonBreath firmware \`${VERSION}\` — BIGTREETECH Panda Breath (ESP32-C3).
-
-          **First install (USB):**
-          \`\`\`
-          esptool.py --chip esp32c3 write_flash 0x0 dragonbreath-${VERSION}-factory.bin
-          \`\`\`
-          **OTA update** (device already on DragonBreath): upload \`dragonbreath-${VERSION}.bin\` via the web UI (\`/fw\`).
+          # Pull this version's section from CHANGELOG.md (## [x.y.z] .. next ## [).
+          changelog="$(awk -v v="${VERSION#v}" '
+            $0 ~ ("^## \\[" v "\\]") {f=1; next}
+            f && /^## \[/ {exit}
+            f {print}
+          ' CHANGELOG.md 2>/dev/null || true)"
+          install="$(cat <<EOF
+          **First install (USB, recommended — backs up stock):** download \`dragonbreath-${VERSION}-install-bundle.zip\`, verify (\`sha256sum -c SHA256SUMS.txt\`), unzip, then \`python3 flash.py --build-dir .\`.
+          Advanced single-image (only if already backed up): \`esptool.py --chip esp32c3 write_flash 0x0 dragonbreath-${VERSION}-factory.bin\`.
+          **OTA** (device already on DragonBreath): upload \`dragonbreath-${VERSION}.bin\` via the web UI (\`/fw\`).
 
           | asset | purpose |
           |---|---|
@@ -80,6 +82,11 @@ jobs:
           | \`SHA256SUMS.txt\` | \`sha256sum -c SHA256SUMS.txt\` |
           EOF
           )"
+          if [ -n "$(printf '%s' "$changelog" | tr -d '[:space:]')" ]; then
+            notes="${changelog}"$'\n\n'"${install}"
+          else
+            notes="$install"
+          fi
           flags=(--title "DragonBreath firmware ${VERSION}" --notes "$notes")
           [ "$IS_TAG" = "true" ] || flags+=(--draft)
           case "$VERSION" in *alpha*|*beta*|*rc*) flags+=(--prerelease);; esac
