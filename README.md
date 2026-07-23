@@ -25,7 +25,7 @@ re-implemented.
 | `pb_ntc` | ✅ Stock conversion ported; **hardware-validated** (reads chamber temp matching the printer) |
 | `pb_heater` | ✅ Bang-bang + full safety cutoffs; SSR confirmed, heat cycle validated on hardware |
 | `pb_fan` | ✅ TRIAC **on/off held-gate** (stock model — the gate is never PWM'd/phase-chopped) |
-| `pb_policy` | ✅ Fan-follows-heater glue |
+| `pb_policy` | 🚧 Authoritative mode/target/lease state machine (API v2 foundation) |
 | Network core: `pv_wifi` / `pv_evlog` / `pv_moonraker` | ✅ Referenced from OpenVent (submodule); WiFi + Moonraker validated on hardware |
 | Portal / status dashboard / heat LED | ✅ Breath-local; captive-portal provisioning + live dashboard validated |
 | HTTP control API (`pb_httpd`) | ✅ `/status` `/target` `/heartbeat` `/reset`; CSRF-gated mutations |
@@ -145,7 +145,7 @@ components/
   pb_ntc/      ADC -> temperature (RE'd stock conversion)
   pb_heater/   SSR control + safety cutoffs + comms watchdog
   pb_fan/      TRIAC on/off held-gate blower control (never PWM)
-  pb_policy/   controller-state -> actuators glue
+  pb_policy/   authoritative control state, modes, leases -> actuators
   pb_httpd/    HTTP control API (CSRF-gated mutations)
   pb_portal/   captive-portal provisioning + live status dashboard
 main/          app_main: safety-first init + control loop

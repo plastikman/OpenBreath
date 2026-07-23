@@ -98,6 +98,21 @@ added alongside `POST /settings` (bounds + current values in one read); `max_uri
 
 ## Phase B — Authoritative state + API v2 + modes
 
+**Delivery split.** Land this phase as a stacked series so safety/control review
+is not mixed with HTTP parsing:
+1. **Authoritative state-machine foundation:** make `pb_policy` the only
+   mode/target writer; add canonical snapshots, revisions, AUTO/DRYING,
+   device-issued leases, stale-lease rejection, boot-OFF, and bounded local
+   operation. Temporarily adapt the alpha HTTP handlers to call policy so there
+   is no second actuator owner between PRs.
+2. **API v2 protocol + observers:** delete the alpha `/status`, `/target`,
+   `/heartbeat`, and `/reset` contract; add the versioned JSON command/state
+   protocol and event stream; migrate the dashboard. `dragonbreath-klipper`
+   moves directly from the alpha API to v2 after the firmware contract lands.
+
+The persistent-fault/thermal-purge work in B2 remains independently reviewable
+safety work and must not be hidden inside transport parsing.
+
 **B1. `pb_policy` becomes the sole control-state and target writer.** Rewrite
 `components/pb_policy/`:
 - Remove `pb_policy_input_t` + the dead `pb_policy_apply()`.

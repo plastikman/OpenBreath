@@ -167,25 +167,31 @@ static void control_task(void *arg)
     }
 
     for (;;) {
+        pv_moonraker_status_t st = {0};
+        if (s_net_up && s_mk_up) pv_moonraker_get_status(&st);
+        bool mk_connected = s_mk_up && st.state == PV_MK_SUBSCRIBED;
+        pb_policy_set_env(st.bed_temp, mk_connected);
+
         // Safety/control loop: enforces every heater cutoff + fan-follows-heater.
-        // The chamber setpoint is owned by the HTTP API (pb_httpd -> pb_heater),
-        // and the comms watchdog is fed by controller polls in pb_httpd — so we
-        // must NOT set the target here (that would clobber the HTTP-set value).
+        // pb_policy is the sole mode/target writer. Network clients and local
+        // inputs submit commands to it; this task applies the resulting outputs.
         pb_policy_tick();
         if (wdt_armed) esp_task_wdt_reset();   // successful loop iteration
 
         if (++dbg >= 4) {   // ~2 s
             dbg = 0;
             bool net = s_net_up;
-            pv_moonraker_status_t st = {0};
-            if (net && s_mk_up) pv_moonraker_get_status(&st);
+            pb_policy_snapshot_t snap;
+            pb_policy_get_snapshot(&snap);
             uint32_t zc = 0, zciv = 0;
             pb_fan_zc_diag(&zc, &zciv);
             ESP_LOGI(TAG,
-                "target=%.0fC heater=%s | chamber=%.1fC ptc=%.1fC | "
+                "rev=%lu mode=%s source=%s target=%.0fC heater=%s | chamber=%.1fC ptc=%.1fC | "
                 "wifi=%d mk=%d printer=%s bed=%.1f | ZC n=%lu dt=%luus",
-                pb_heater_get_target_c(), pb_heater_is_on() ? "ON" : "off",
-                pb_ntc_smoothed_c(PB_NTC_CHAMBER), pb_ntc_smoothed_c(PB_NTC_PTC),
+                (unsigned long)snap.state_revision,
+                pb_policy_mode_str(snap.mode), pb_policy_source_str(snap.source),
+                snap.effective_target_c, snap.heater_output ? "ON" : "off",
+                snap.chamber_c, snap.ptc_c,
                 net ? (int)pv_wifi_state() : -1, (int)st.state,
                 pv_printer_state_str(st.printer), st.bed_temp,
                 (unsigned long)zc, (unsigned long)zciv);

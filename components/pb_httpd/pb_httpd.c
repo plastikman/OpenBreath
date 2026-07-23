@@ -2,6 +2,7 @@
 #include "pb_httpd.h"
 #include "pb_heater.h"
 #include "pb_ntc.h"
+#include "pb_policy.h"
 
 #include "esp_http_server.h"
 #include "esp_log.h"
@@ -88,26 +89,34 @@ static void add_num1(cJSON *o, const char *key, float v)
 // when a channel isn't reading OK, alongside explicit per-sensor status.
 static esp_err_t status_get(httpd_req_t *req)
 {
-    pb_ntc_status_t cs = pb_ntc_last_status(PB_NTC_CHAMBER);
-    pb_ntc_status_t ps = pb_ntc_last_status(PB_NTC_PTC);
+    pb_policy_snapshot_t snap;
+    pb_policy_get_snapshot(&snap);
+    pb_ntc_status_t cs = snap.chamber_status;
+    pb_ntc_status_t ps = snap.ptc_status;
 
     cJSON *o = cJSON_CreateObject();
     if (!o) { httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "oom"); return ESP_FAIL; }
 
-    add_num1(o, "temp", cs == PB_NTC_OK ? pb_ntc_smoothed_c(PB_NTC_CHAMBER) : NAN);
-    add_num1(o, "ptc",  ps == PB_NTC_OK ? pb_ntc_smoothed_c(PB_NTC_PTC)     : NAN);
+    add_num1(o, "temp", snap.chamber_c);
+    add_num1(o, "ptc", snap.ptc_c);
     cJSON_AddStringToObject(o, "chamber_status", ntc_status_str(cs));
     cJSON_AddStringToObject(o, "ptc_status", ntc_status_str(ps));
-    add_num1(o, "target", pb_heater_get_target_c());
-    cJSON_AddBoolToObject(o, "heating", pb_heater_is_on());
-    cJSON_AddBoolToObject(o, "fault", pb_heater_is_faulted());
-    const char *fr = pb_heater_fault_reason();
-    if (fr) cJSON_AddStringToObject(o, "fault_reason", fr);
+    add_num1(o, "target", snap.effective_target_c);
+    cJSON_AddBoolToObject(o, "heating", snap.heater_output);
+    cJSON_AddBoolToObject(o, "fault", snap.fault_latched);
+    if (snap.fault_reason[0])
+        cJSON_AddStringToObject(o, "fault_reason", snap.fault_reason);
     else    cJSON_AddNullToObject(o, "fault_reason");
     add_num1(o, "max", pb_heater_get_max_target_c());
     add_num1(o, "max_abs", PB_HEATER_ABS_MAX_TARGET_C);
     cJSON_AddNumberToObject(o, "comms_ms", pb_heater_get_comms_timeout_ms());
     cJSON_AddStringToObject(o, "version", esp_app_get_description()->version);
+    // Transitional visibility while the dashboard/helper still use the alpha
+    // routes. API v2 replaces this entire document with the canonical snapshot.
+    cJSON_AddNumberToObject(o, "revision", snap.state_revision);
+    cJSON_AddStringToObject(o, "mode", pb_policy_mode_str(snap.mode));
+    cJSON_AddStringToObject(o, "source", pb_policy_source_str(snap.source));
+    cJSON_AddBoolToObject(o, "lease_active", snap.lease_active);
 
     char *out = cJSON_PrintUnformatted(o);
     httpd_resp_set_type(req, "application/json");
@@ -122,7 +131,14 @@ static esp_err_t status_get(httpd_req_t *req)
 static esp_err_t heartbeat_post(httpd_req_t *req)
 {
     if (auth_reject(req)) return ESP_OK;
-    pb_heater_notify_link_alive();
+    pb_policy_result_t r = pb_policy_heartbeat_legacy();
+    if (r != PB_POLICY_OK) {
+        httpd_resp_set_status(req, "409 Conflict");
+        httpd_resp_set_type(req, "application/json");
+        char b[80];
+        snprintf(b, sizeof b, "{\"error\":\"%s\"}", pb_policy_result_str(r));
+        return httpd_resp_sendstr(req, b);
+    }
     httpd_resp_set_type(req, "application/json");
     return httpd_resp_sendstr(req, "{\"ok\":true}");
 }
@@ -139,7 +155,14 @@ static esp_err_t reset_post(httpd_req_t *req)
         return httpd_resp_sendstr(req,
             "{\"error\":\"heater permanently inhibited — reboot required\"}");
     }
-    pb_heater_clear_fault();
+    pb_policy_result_t r = pb_policy_clear_fault(PB_SOURCE_WEB);
+    if (r != PB_POLICY_OK) {
+        httpd_resp_set_status(req, "409 Conflict");
+        httpd_resp_set_type(req, "application/json");
+        char b[80];
+        snprintf(b, sizeof b, "{\"error\":\"%s\"}", pb_policy_result_str(r));
+        return httpd_resp_sendstr(req, b);
+    }
     httpd_resp_set_type(req, "application/json");
     return httpd_resp_sendstr(req, "{\"ok\":true}");
 }
@@ -183,20 +206,31 @@ static esp_err_t target_set(httpd_req_t *req)
         return ESP_FAIL;
     }
 
-    pb_heater_notify_link_alive();                   // a command counts as liveness
-    esp_err_t se = pb_heater_set_target_c(t);        // validates + clamps internally
-    if (se == ESP_ERR_INVALID_STATE) {               // heat requested while faulted
+    pb_policy_result_t pr;
+    pb_policy_lease_t lease = {0};
+    if (t <= 0.0f) {
+        pb_policy_set_mode_off(PB_SOURCE_WEB);
+        pr = PB_POLICY_OK;
+    } else {
+        pr = pb_policy_set_power_on(
+            t, PB_SOURCE_WEB, "legacy-http", PB_POLICY_REVISION_ANY, &lease);
+    }
+    if (pr == PB_POLICY_FAULT_LATCHED || pr == PB_POLICY_INHIBITED) {
         httpd_resp_set_status(req, "409 Conflict");
         httpd_resp_set_type(req, "application/json");
         return httpd_resp_sendstr(req,
             "{\"error\":\"fault latched — POST /reset, then set a target\"}");
     }
-    if (se != ESP_OK) {
+    if (pr != PB_POLICY_OK) {
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "invalid target");
         return ESP_FAIL;
     }
-    char buf[48];
-    int n = snprintf(buf, sizeof buf, "{\"target\":%.1f}", pb_heater_get_target_c());
+    pb_policy_snapshot_t snap;
+    pb_policy_get_snapshot(&snap);
+    char buf[160];
+    int n = snprintf(buf, sizeof buf,
+        "{\"target\":%.1f,\"revision\":%lu,\"lease\":\"%s\"}",
+        snap.effective_target_c, (unsigned long)snap.state_revision, lease.id);
     httpd_resp_set_type(req, "application/json");
     return httpd_resp_send(req, buf, n);
 }
@@ -303,7 +337,9 @@ static esp_err_t update_post(httpd_req_t *req)
     if (auth_reject(req)) return ESP_OK;
 
     // Block while heating (chosen safety policy).
-    if (pb_heater_is_on() || pb_heater_get_target_c() > 0.0f)
+    pb_policy_snapshot_t snap;
+    pb_policy_get_snapshot(&snap);
+    if (snap.heater_output || snap.effective_target_c > 0.0f)
         return ota_fail(req, "409 Conflict", 0, "turn the heater off before updating");
 
     const esp_partition_t *part = esp_ota_get_next_update_partition(NULL);

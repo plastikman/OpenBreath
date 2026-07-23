@@ -6,6 +6,7 @@ on:
     paths:
       - 'components/**'
       - 'main/**'
+      - 'tests/**'
       - 'CMakeLists.txt'
       - 'partitions.csv'
       - 'sdkconfig.defaults'
@@ -14,6 +15,7 @@ on:
     paths:
       - 'components/**'
       - 'main/**'
+      - 'tests/**'
       - 'CMakeLists.txt'
       - 'partitions.csv'
       - 'sdkconfig.defaults'
@@ -38,6 +40,9 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           submodules: recursive
+
+      - name: Test authoritative policy state machine
+        run: sh tests/run_policy_host_test.sh
 
       - name: Build (ESP-IDF v5.3)
         uses: espressif/esp-idf-ci-action@9d38657f3d789ca759b2b37aaf5ceffbc42c4f0d # v1
