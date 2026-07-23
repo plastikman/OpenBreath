@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 // pb_httpd — tiny HTTP control API so a Klipper-side helper can surface the
-// chamber in Fluidd (temp + settable target) and map M141/M191 to OpenBreath.
+// chamber in Fluidd (temp + settable target) and map M141/M191 to DragonBreath.
 //
 //   GET  /status       -> {temp,ptc,target,heating,fault,max}  READ-ONLY, no side effects
 //   POST /target?t=<C> -> set chamber setpoint in C (0=off); also counts as liveness
@@ -12,7 +12,7 @@
 // off. GET /status never feeds the watchdog. Start after WiFi is up.
 //
 // CSRF / control gate: every mutating endpoint (/target, /reset, /heartbeat, and
-// the portal's STA-mode /save) requires the custom header "X-OpenBreath-Auth".
+// the portal's STA-mode /save) requires the custom header "X-DragonBreath-Auth".
 // A cross-origin HTML form cannot set a custom header and we never enable CORS,
 // so an ordinary drive-by page cannot command the heater or rewrite its Wi-Fi
 // config. GET /status stays open (read-only). This is CSRF hardening for a
@@ -23,7 +23,7 @@
 #include <stddef.h>
 #include <stdbool.h>
 
-#define PB_AUTH_HEADER "X-OpenBreath-Auth"
+#define PB_AUTH_HEADER "X-DragonBreath-Auth"
 
 esp_err_t pb_httpd_start(void);
 

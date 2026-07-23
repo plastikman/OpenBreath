@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// OpenBreath — open firmware for the BIGTREETECH Panda Breath (ESP32-C3).
+// DragonBreath — open firmware for the BIGTREETECH Panda Breath (ESP32-C3).
 //
 // Safety-first init: the heater SSR is forced OFF before anything can request
 // heat, and the control/telemetry loop is started BEFORE networking so it runs
@@ -17,6 +17,7 @@
 #include "nvs_flash.h"
 #include "nvs.h"
 #include <stdbool.h>
+#include <string.h>
 
 #include "pb_board.h"
 #include "pb_ntc.h"
@@ -26,6 +27,8 @@
 
 #include "esp_wifi.h"
 #include "esp_mac.h"
+#include "esp_netif.h"
+#include "mdns.h"
 #include "pv_wifi.h"
 #include "pv_moonraker.h"
 
@@ -41,7 +44,7 @@
 #  endif
 #endif
 
-static const char *TAG = "openbreath";
+static const char *TAG = "dragonbreath";
 
 #define PB_TICK_PERIOD_MS 500
 
@@ -52,29 +55,53 @@ static volatile bool s_net_up = false;
 // failed to initialize (its internal state/mutex may be unset).
 static volatile bool s_mk_up = false;
 
-// Brand the captive-portal AP as "OpenPanda_XXXX". The shared pv_wifi reads the
-// AP SSID from NVS (key "ap_ssid"), so we override its "OpenVent_" default this
-// way without patching the shared component. (mDNS hostname stays OpenVent.local
-// until pv_wifi is made configurable upstream.)
+// Brand the captive-portal AP as "DragonBreath_XXXX". The shared pv_wifi reads the
+// AP SSID from NVS (key "ap_ssid"), so we override its "OpenVent_" default this way
+// without patching the shared component. We also migrate the previous "OpenPanda_"
+// default (pre-DragonBreath rebrand) so an already-provisioned device adopts the new
+// name, while preserving any user-customized SSID. (mDNS hostname is overridden
+// separately in brand_hostname().)
 static void brand_ap(void)
 {
     nvs_handle_t h;
     if (nvs_open("app_nvs", NVS_READWRITE, &h) != ESP_OK) return;
-    // Only set the default once — don't rewrite NVS (flash wear) every boot, and
-    // don't clobber a user-customized AP name.
-    size_t sz = 0;
-    if (nvs_get_str(h, "ap_ssid", NULL, &sz) == ESP_OK && sz > 1) {
+    // Set the default once (avoid NVS flash wear each boot) and never clobber a
+    // user-customized name — but DO migrate the legacy "OpenPanda_" default.
+    char cur[33] = {0};
+    size_t sz = sizeof cur;
+    esp_err_t r = nvs_get_str(h, "ap_ssid", cur, &sz);
+    if (r == ESP_OK && sz > 1 && strncmp(cur, "OpenPanda_", 10) != 0) {
         nvs_close(h);
         return;
     }
     uint8_t mac[6] = {0};
     esp_read_mac(mac, ESP_MAC_WIFI_SOFTAP);
     char ssid[33];
-    snprintf(ssid, sizeof ssid, "OpenPanda_%02X%02X", mac[4], mac[5]);
+    snprintf(ssid, sizeof ssid, "DragonBreath_%02X%02X", mac[4], mac[5]);
     nvs_set_str(h, "ap_ssid", ssid);
     nvs_commit(h);
     nvs_close(h);
     ESP_LOGI(TAG, "AP SSID default set: %s", ssid);
+}
+
+// Override the shared pv_wifi mDNS/netif hostname ("OpenVent") so the device
+// advertises as dragonbreath.local, WITHOUT patching the OpenVent submodule.
+// Call AFTER pv_wifi_start() (which runs mdns_init + sets the OpenVent default);
+// these calls just update the already-registered records. Best-effort / log-only:
+// a failure only means the device keeps the OpenVent.local name — it never affects
+// the safety loop or WiFi. (Interim until the shared core exposes a hostname API —
+// see plans/rebrand-dragonbreath.md.)
+static void brand_hostname(void)
+{
+    static const char *HN = "dragonbreath";
+    esp_netif_t *sta = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+    esp_netif_t *ap  = esp_netif_get_handle_from_ifkey("WIFI_AP_DEF");
+    if (sta) esp_netif_set_hostname(sta, HN);
+    if (ap)  esp_netif_set_hostname(ap, HN);
+    mdns_hostname_set(HN);
+    mdns_instance_name_set(HN);
+    mdns_service_instance_name_set("_http", "_tcp", HN);
+    ESP_LOGI(TAG, "mDNS hostname override: %s.local", HN);
 }
 
 static void nvs_init(void)
@@ -86,7 +113,7 @@ static void nvs_init(void)
     }
 }
 
-#if defined(OB_WIFI_SSID) || defined(OB_MOONRAKER_HOST)
+#if defined(DB_WIFI_SSID) || defined(DB_MOONRAKER_HOST)
 // Dev-only: seed WiFi creds + Moonraker config into the NVS layout the shared
 // components load at start (namespace app_nvs; keys ssid/password + mk_host/mk_port).
 // This is what the portal would normally write. IMPORTANT: seed via NVS and let
@@ -105,13 +132,13 @@ static void seed_dev_config(void)
         ESP_LOGI(TAG, "WiFi creds already in NVS; not seeding dev_config");
         return;
     }
-#ifdef OB_WIFI_SSID
-    nvs_set_str(h, "ssid", OB_WIFI_SSID);
-    nvs_set_str(h, "password", OB_WIFI_PASS);
+#ifdef DB_WIFI_SSID
+    nvs_set_str(h, "ssid", DB_WIFI_SSID);
+    nvs_set_str(h, "password", DB_WIFI_PASS);
 #endif
-#ifdef OB_MOONRAKER_HOST
-    nvs_set_str(h, "mk_host", OB_MOONRAKER_HOST);
-    nvs_set_u16(h, "mk_port", OB_MOONRAKER_PORT);
+#ifdef DB_MOONRAKER_HOST
+    nvs_set_str(h, "mk_host", DB_MOONRAKER_HOST);
+    nvs_set_u16(h, "mk_port", DB_MOONRAKER_PORT);
 #endif
     nvs_commit(h);
     nvs_close(h);
@@ -168,7 +195,7 @@ static void control_task(void *arg)
 
 void app_main(void)
 {
-    ESP_LOGI(TAG, "OpenBreath starting");
+    ESP_LOGI(TAG, "DragonBreath starting");
 
     pb_board_init();
     ESP_ERROR_CHECK(pb_heater_init());     // SSR forced OFF before anything else
@@ -184,8 +211,8 @@ void app_main(void)
     // Bring up networking. If a start call blocks under a flaky link, the control
     // loop above is already running, so safety + telemetry continue.
     nvs_init();
-    brand_ap();                              // AP name = OpenPanda_XXXX
-#if defined(OB_WIFI_SSID) || defined(OB_MOONRAKER_HOST)
+    brand_ap();                              // AP name = DragonBreath_XXXX
+#if defined(DB_WIFI_SSID) || defined(DB_MOONRAKER_HOST)
     seed_dev_config();
 #endif
     // Network bring-up is LOG-AND-CONTINUE, never ESP_ERROR_CHECK: a transient
@@ -194,6 +221,8 @@ void app_main(void)
     esp_err_t e;
     if ((e = pv_wifi_start()) != ESP_OK)
         ESP_LOGE(TAG, "pv_wifi_start: %s (continuing; safety loop unaffected)", esp_err_to_name(e));
+    else
+        brand_hostname();                    // advertise as dragonbreath.local
     // Mains-powered device: disable WiFi modem-sleep so the control API stays
     // responsive (power-save adds ~0.5s latency spikes to incoming requests).
     esp_wifi_set_ps(WIFI_PS_NONE);

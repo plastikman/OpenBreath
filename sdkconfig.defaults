@@ -1,4 +1,4 @@
-# OpenBreath default sdkconfig — ESP32-C3-MINI-1 (4MB flash)
+# DragonBreath default sdkconfig — ESP32-C3-MINI-1 (4MB flash)
 CONFIG_IDF_TARGET="esp32c3"
 
 # Flash / partitions

@@ -1,4 +1,4 @@
-# OpenBreath
+# DragonBreath
 
 Open firmware for the **BIGTREETECH Panda Breath** chamber heater (ESP32-C3),
 replacing the stock cloud integration with **Moonraker/Klipper** (and Home
@@ -6,7 +6,7 @@ Assistant) control.
 
 Sibling to [OpenVent](https://github.com/justinh-rahb/OpenVent) — part of an
 open-firmware **family for the BTT Panda line** that shares a common core.
-OpenBreath mirrors OpenVent's ESP-IDF + `components/` layout on purpose, so the
+DragonBreath mirrors OpenVent's ESP-IDF + `components/` layout on purpose, so the
 shared core (WiFi, captive portal, Moonraker client) is lifted in rather than
 re-implemented.
 
@@ -29,9 +29,9 @@ re-implemented.
 | Network core: `pv_wifi` / `pv_evlog` / `pv_moonraker` | ✅ Referenced from OpenVent (submodule); WiFi + Moonraker validated on hardware |
 | Portal / status dashboard / heat LED | ✅ Breath-local; captive-portal provisioning + live dashboard validated |
 | HTTP control API (`pb_httpd`) | ✅ `/status` `/target` `/heartbeat` `/reset`; CSRF-gated mutations |
-| Klipper-side helper (M141 / Fluidd) | ✅ [openbreath-klipper](https://github.com/plastikman/openbreath-klipper) — HTTP transport, M141/M191, Fluidd chamber card |
+| Klipper-side helper (M141 / Fluidd) | ✅ [dragonbreath-klipper](https://github.com/plastikman/dragonbreath-klipper) — HTTP transport, M141/M191, Fluidd chamber card |
 | Flasher (`tools/flash.py`) | ✅ Backs up full stock flash first, then flashes; `--restore` returns to stock |
-| Web OTA update | ✅ Dual-OTA + rollback; upload from the UI, verified on hardware (OpenBreath-only, refused while heating) |
+| Web OTA update | ✅ Dual-OTA + rollback; upload from the UI, verified on hardware (DragonBreath-only, refused while heating) |
 
 **Shared-core boundary:** board-agnostic infrastructure (WiFi, event log, Moonraker
 client) is referenced from the [OpenVent](https://github.com/justinh-rahb/OpenVent)
@@ -47,7 +47,7 @@ LED / button UI — stays in this repo.
 </p>
 
 Left → right: the live status dashboard, Wi-Fi / printer setup (captive portal),
-and the OpenBreath-only OTA firmware-update page. Served by the device itself over
+and the DragonBreath-only OTA firmware-update page. Served by the device itself over
 plain HTTP on your LAN.
 
 ## Hardware
@@ -75,7 +75,7 @@ before touching heater code and supervise the device.
 | POST | `/reset` | clear a latched safety fault |
 
 Every **mutating** endpoint (and the portal's STA-mode `/save`) requires a custom
-`X-OpenBreath-Auth` header. A cross-origin HTML form can't set a custom header and
+`X-DragonBreath-Auth` header. A cross-origin HTML form can't set a custom header and
 CORS is never enabled, so an ordinary drive-by web page can't drive the heater or
 rewrite the WiFi config. This is **CSRF hardening for a trusted LAN, not transport
 security** — the API is unencrypted HTTP. For untrusted networks, set a control
@@ -94,7 +94,7 @@ Fully reverse-engineered from the stock firmware — a low-side resistance divid
 ## Build
 Requires ESP-IDF v5.3+.
 ```bash
-git clone --recurse-submodules https://github.com/plastikman/OpenBreath
+git clone --recurse-submodules https://github.com/plastikman/DragonBreath
 idf.py set-target esp32c3
 idf.py build
 ```
@@ -102,7 +102,7 @@ idf.py build
 ## Install & update
 
 > 🛑 **BACK UP YOUR DEVICE FIRST. THIS IS IRREVERSIBLE WITHOUT A BACKUP.**
-> Installing OpenBreath **overwrites the entire flash** and **erases the stock
+> Installing DragonBreath **overwrites the entire flash** and **erases the stock
 > firmware**. BIGTREETECH does **not** publish stock images, so **the full backup
 > you take is the ONLY way back to stock.** If you skip the backup (or lose the
 > file), there is **no going back** — you will be permanently on custom firmware.
@@ -110,22 +110,22 @@ idf.py build
 > **do not use `--no-backup`** unless you already have a known-good backup stored
 > somewhere safe. Copy the backup off your machine (cloud/USB) before flashing.
 
-**First install (stock → OpenBreath):** use the flasher, which backs up the
+**First install (stock → DragonBreath):** use the flasher, which backs up the
 *entire* stock flash to a timestamped image **before** writing anything, so you
 can return to stock. Flashing is over the on-board CH340K USB-C bridge
 (native USB is unavailable — GPIO18 is the SSR):
 ```bash
-python3 tools/flash.py                 # backup stock, then flash OpenBreath
+python3 tools/flash.py                 # backup stock, then flash DragonBreath
 python3 tools/flash.py --restore backups/stock-YYYYmmdd-HHMMSS.bin   # back to stock
 ```
-First boot with no stored WiFi starts an `OpenPanda_XXXX` AP + captive portal for
+First boot with no stored WiFi starts an `DragonBreath_XXXX` AP + captive portal for
 provisioning. The AP password is **`987654321`** (same as the stock Panda). Connect
 to it and a browser should pop the setup page automatically (or open `http://192.168.4.1`).
 
-**Updating OpenBreath:** once running, open the **Firmware update** link on the
-status page (the `/fw` page) and upload `build/openbreath.bin`. The image lands in
+**Updating DragonBreath:** once running, open the **Firmware update** link on the
+status page (the `/fw` page) and upload `build/dragonbreath.bin`. The image lands in
 the inactive OTA slot, is verified, and the device reboots into it; a bad image
-rolls back on the next boot. Web OTA is **OpenBreath-only** — it does **not**
+rolls back on the next boot. Web OTA is **DragonBreath-only** — it does **not**
 restore stock firmware (use `tools/flash.py --restore` for that) and is refused
 while the heater is on.
 
@@ -149,7 +149,7 @@ this project's `klipper-esp32` history and the OpenVent architecture
 ([justinh-rahb](https://github.com/justinh-rahb)). MIT licensed.
 
 ## Support
-If OpenBreath is useful to you, you can support development here:
+If DragonBreath is useful to you, you can support development here:
 
 [![Buy Me A Coffee](https://www.buymeacoffee.com/assets/img/custom_images/orange_img.png)](https://buymeacoffee.com/plastikman)
 [![Donate with PayPal](https://www.paypalobjects.com/en_US/i/btn/btn_donate_LG.gif)](https://www.paypal.com/donate/?business=MPMX47RUYQFKJ&no_recurring=1&currency_code=USD)

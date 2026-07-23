@@ -1,4 +1,4 @@
-# OpenBreath partition table — ESP32-C3, 4MB flash, dual-OTA.
+# DragonBreath partition table — ESP32-C3, 4MB flash, dual-OTA.
 #
 # TODO (before first flash): reconcile the flashing strategy.
 #   - If we KEEP the stock 2nd-stage bootloader, this table's offsets/layout must

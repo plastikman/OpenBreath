@@ -23,19 +23,19 @@ static const char *TAG = "pb_portal";
 #define SEND(req, s) do { const char *_s = (s); if (_s && _s[0]) httpd_resp_send_chunk((req), _s, HTTPD_RESP_USE_STRLEN); } while (0)
 
 // Shared client-side auth helpers, injected into every control page's <script>.
-// window.OB_TOK holds the CSRF sentinel ("web") ONLY when no control token is
-// configured. When a token IS configured the device sets window.OB_NEEDTOK
+// window.DB_TOK holds the CSRF sentinel ("web") ONLY when no control token is
+// configured. When a token IS configured the device sets window.DB_NEEDTOK
 // instead and never emits the secret — we prompt for it and cache it in
 // localStorage, so a configured token is genuine auth rather than a value baked
 // into this public page. On a 403 the cached token is dropped and re-prompted.
-#define OB_AUTH_JS \
-    "function tok(){if(window.OB_TOK)return window.OB_TOK;" \
-    "var t=localStorage.getItem('ob_tok');" \
-    "if(!t){t=prompt('OpenBreath control token')||'';if(t)localStorage.setItem('ob_tok',t);}" \
+#define DB_AUTH_JS \
+    "function tok(){if(window.DB_TOK)return window.DB_TOK;" \
+    "var t=localStorage.getItem('db_tok');" \
+    "if(!t){t=prompt('DragonBreath control token')||'';if(t)localStorage.setItem('db_tok',t);}" \
     "return t;}" \
-    "function hdr(){return {'X-OpenBreath-Auth':tok()};}" \
+    "function hdr(){return {'X-DragonBreath-Auth':tok()};}" \
     "function post(u){return fetch(u,{method:'POST',headers:hdr()}).then(function(r){" \
-    "if(r.status==403){localStorage.removeItem('ob_tok');alert('Control token rejected \\u2014 try again.');}return r;});}"
+    "if(r.status==403){localStorage.removeItem('db_tok');alert('Control token rejected \\u2014 try again.');}return r;});}"
 
 // ---- form parsing (application/x-www-form-urlencoded) ----
 static int hexval(char c)
@@ -113,7 +113,7 @@ static void html_attr_escape(const char *in, char *out, size_t outsz)
 static const char PAGE_HEAD[] =
     "<!doctype html><html><head><meta charset=utf-8>"
     "<meta name=viewport content='width=device-width,initial-scale=1'>"
-    "<title>OpenPanda</title><style>"
+    "<title>DragonBreath</title><style>"
     ":root{--bg:#272525;--card:#333;--accent:#4087FE;--text:#F0F0F0;--input:#2c2c2c;--border:rgba(255,255,255,.12);color-scheme:dark}"
     "*{box-sizing:border-box}"
     "body{margin:0;background:var(--bg);font-family:Arial,Helvetica,sans-serif;color:var(--text)}"
@@ -133,7 +133,7 @@ static const char PAGE_HEAD[] =
     "button:disabled{opacity:.4;cursor:not-allowed}"
     ".srow{display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid rgba(255,255,255,.07)}.srow:last-child{border:0}"
     "small{color:#8a8a8a}a{color:#4aa3ff}</style></head><body>"
-    "<div class=hdr><h1>\xF0\x9F\x90\xBC OpenPanda</h1><p>Panda Breath</p></div>"
+    "<div class=hdr><h1>\xF0\x9F\x90\xBC DragonBreath</h1><p>Panda Breath</p></div>"
     "<div class=wrap>";
 
 // Wi-Fi form card (config page).
@@ -166,11 +166,11 @@ static const char STATUS_BODY[] =
     "<p style='text-align:center'><small><a href='/setup'>Wi-Fi / printer setup</a>"
     " &middot; <a href='/fw'>Firmware update</a></small></p>"
     "<p style='text-align:center;margin-top:-6px'><small style='color:#6f6f6f'>"
-    "Firmware update installs <b>OpenBreath</b> updates only \xE2\x80\x94 it does <b>not</b> "
+    "Firmware update installs <b>DragonBreath</b> updates only \xE2\x80\x94 it does <b>not</b> "
     "restore the stock Panda firmware.</small></p>"
     "<div id=ver style='text-align:center;color:#5a5a5a;font-size:.72rem;margin-top:2px'></div></div>"
-    "<script>" OB_AUTH_JS
-    "if(window.OB_VER)document.getElementById('ver').textContent='OpenBreath '+window.OB_VER;"
+    "<script>" DB_AUTH_JS
+    "if(window.DB_VER)document.getElementById('ver').textContent='DragonBreath '+window.DB_VER;"
     // iOwn: did THIS tab start the current heat? We heartbeat ONLY then, so a
     // passive or freshly-reloaded dashboard (iOwn=false) never pets the comms
     // watchdog and therefore can't mask a Klippy/controller failure.
@@ -207,26 +207,26 @@ static const char STATUS_BODY[] =
     "refresh();setInterval(refresh,2000);"
     "</script></body></html>";
 
-// Dedicated firmware-update page (GET /fw) — OpenBreath OTA only, its own page so
+// Dedicated firmware-update page (GET /fw) — DragonBreath OTA only, its own page so
 // it isn't mixed in with Wi-Fi/printer setup.
 static const char FW_BODY[] =
     "<div class=card><h2>Firmware update</h2>"
     "<p style='margin:.2em 0 .7em;font-size:.85rem;color:#bdbdbd'>Installs an "
-    "<b>OpenBreath</b> firmware update (upload <code>openbreath.bin</code>). The "
+    "<b>DragonBreath</b> firmware update (upload <code>dragonbreath.bin</code>). The "
     "image is verified and the device reboots into it; a bad image rolls back on "
     "the next boot.</p>"
     "<div class=card style='background:#3a2f1f;color:#ffe0b0;font-size:.8rem'>"
     "\xE2\x9A\xA0 This does <b>not</b> restore the stock Panda firmware. To go back to "
     "stock, reflash your saved backup over USB with <code>tools/flash.py --restore</code>.</div>"
-    "<label>OpenBreath firmware (.bin)</label>"
+    "<label>DragonBreath firmware (.bin)</label>"
     "<input type=file id=fw accept='.bin' onchange='fwsel()'>"
     "<button type=button id=fwbtn class=go onclick='doUpdate()' disabled>Upload &amp; flash</button>"
     "<div id=fwmsg style='margin-top:.6em;word-break:break-all'><small>Turn the heater OFF first "
     "(updates are refused while heating). Do not power off during the update.</small></div></div>"
     "<p style='text-align:center'><small><a href='/'>\xE2\x86\x90 Back to status</a></small></p>"
     "<div id=ver style='text-align:center;color:#5a5a5a;font-size:.72rem;margin-top:2px'></div></div>"
-    "<script>" OB_AUTH_JS
-    "if(window.OB_VER)document.getElementById('ver').textContent='OpenBreath '+window.OB_VER;"
+    "<script>" DB_AUTH_JS
+    "if(window.DB_VER)document.getElementById('ver').textContent='DragonBreath '+window.DB_VER;"
     // Enable the flash button only once a file is chosen.
     "function fwsel(){document.getElementById('fwbtn').disabled=!document.getElementById('fw').files.length;}"
     // Stream the chosen .bin to /update with the auth header; device validates,
@@ -251,8 +251,8 @@ static const char PAGE_TAIL[] =
     "<button type=submit class=go>Save &amp; Connect</button></form>"
     "<div id=msg style='text-align:center'><small>The device reboots and joins your network after saving.</small></div>"
     "<p style='text-align:center'><small><a href='/fw'>Firmware update</a></small></p></div>"
-    "<script>" OB_AUTH_JS
-    // Submit via fetch so we can attach the X-OpenBreath-Auth header (a plain form
+    "<script>" DB_AUTH_JS
+    // Submit via fetch so we can attach the X-DragonBreath-Auth header (a plain form
     // POST can't). Required in STA /setup (the /save handler gates on it there);
     // harmless in AP mode. The device reboots on save, so a dropped connection on
     // the .then/.catch is the expected success path.
@@ -276,22 +276,22 @@ static const char PAGE_TAIL[] =
 
 // Inject the client-side auth bootstrap. If a control token is configured we emit
 // only a NEEDTOK flag (never the secret) so the page prompts for it; otherwise we
-// emit the "web" CSRF sentinel. Paired with OB_AUTH_JS's tok()/hdr().
+// emit the "web" CSRF sentinel. Paired with DB_AUTH_JS's tok()/hdr().
 static void send_auth_inject(httpd_req_t *req)
 {
     char tok[65];
     pb_httpd_ctl_token(tok, sizeof tok);   // 65-byte buffer: never false-negative
     SEND(req, tok[0]
-        ? "<script>window.OB_NEEDTOK=1;</script>"
-        : "<script>window.OB_TOK=\"web\";</script>");
+        ? "<script>window.DB_NEEDTOK=1;</script>"
+        : "<script>window.DB_TOK=\"web\";</script>");
 }
 
 // Inject the firmware version (git tag for releases, short hash for PR/local) as
-// window.OB_VER so pages can show it. From the ESP app descriptor (see CMakeLists).
+// window.DB_VER so pages can show it. From the ESP app descriptor (see CMakeLists).
 static void send_version_inject(httpd_req_t *req)
 {
     char b[128];
-    snprintf(b, sizeof b, "<script>window.OB_VER=\"%s\";</script>",
+    snprintf(b, sizeof b, "<script>window.DB_VER=\"%s\";</script>",
              esp_app_get_description()->version);
     SEND(req, b);
 }
@@ -400,7 +400,7 @@ static esp_err_t save_post(httpd_req_t *req)
     if (pv_wifi_state() != PV_WIFI_STATE_AP_PORTAL && !pb_httpd_auth_ok(req)) {
         httpd_resp_set_status(req, "403 Forbidden");
         httpd_resp_set_type(req, "application/json");
-        return httpd_resp_sendstr(req, "{\"error\":\"missing/invalid X-OpenBreath-Auth header\"}");
+        return httpd_resp_sendstr(req, "{\"error\":\"missing/invalid X-DragonBreath-Auth header\"}");
     }
 
     char body[640];

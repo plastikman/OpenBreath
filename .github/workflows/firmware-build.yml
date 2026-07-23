@@ -37,9 +37,9 @@ jobs:
       - name: Upload firmware artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: openbreath-firmware
+          name: dragonbreath-firmware
           path: |
-            build/openbreath.bin
+            build/dragonbreath.bin
             build/bootloader/bootloader.bin
             build/partition_table/partition-table.bin
           if-no-files-found: warn

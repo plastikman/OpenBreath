@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: MIT
-"""OpenBreath installer/flasher for the BIGTREETECH Panda Breath (ESP32-C3).
+"""DragonBreath installer/flasher for the BIGTREETECH Panda Breath (ESP32-C3).
 
 *** READ THIS FIRST ***
-Installing OpenBreath OVERWRITES THE ENTIRE FLASH and ERASES the stock firmware.
+Installing DragonBreath OVERWRITES THE ENTIRE FLASH and ERASES the stock firmware.
 BIGTREETECH does not publish stock images, so THE FULL BACKUP THIS TOOL TAKES IS
 THE ONLY WAY BACK TO STOCK. If you skip the backup or lose the backup file, THERE
 IS NO GOING BACK. Store the backup somewhere safe (copy it off this machine).
 
 Backs up the ENTIRE existing flash to a timestamped file BEFORE writing anything,
-then flashes the OpenBreath build. The backup is a full 4 MB image, so you can
+then flashes the DragonBreath build. The backup is a full 4 MB image, so you can
 return to stock:
 
-    # First-time install (back up stock, then flash OpenBreath):
+    # First-time install (back up stock, then flash DragonBreath):
     python3 tools/flash.py
 
     # Restore a previous backup (e.g. go back to stock):
@@ -34,12 +34,12 @@ import sys
 
 CHIP = "esp32c3"
 FLASH_SIZE = 0x400000  # 4 MB
-# OpenBreath image layout (matches build/flash_args / partitions.csv).
+# DragonBreath image layout (matches build/flash_args / partitions.csv).
 IMAGES = [
     ("0x0",      "bootloader/bootloader.bin"),
     ("0x8000",   "partition_table/partition-table.bin"),
     ("0xf000",   "ota_data_initial.bin"),
-    ("0x20000",  "openbreath.bin"),
+    ("0x20000",  "dragonbreath.bin"),
 ]
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -129,8 +129,8 @@ def do_flash(port, baud, build_dir):
             print("       Build first:  idf.py set-target esp32c3 && idf.py build")
             return 1
         args += [offset, p]
-    app = os.path.join(build_dir, "openbreath.bin")
-    print(f"\n[3/3] Flashing OpenBreath from {build_dir}")
+    app = os.path.join(build_dir, "dragonbreath.bin")
+    print(f"\n[3/3] Flashing DragonBreath from {build_dir}")
     print(f"      app image SHA-256: {sha256_file(app)}")
     return run(esptool_cmd(port, baud,
                            "--before", "default_reset", "--after", "hard_reset",
@@ -174,7 +174,7 @@ def do_restore(port, baud, image):
 
 
 def main():
-    ap = argparse.ArgumentParser(description="OpenBreath flasher (backs up stock first).")
+    ap = argparse.ArgumentParser(description="DragonBreath flasher (backs up stock first).")
     ap.add_argument("--port", help="serial port (default: esptool auto-detect)")
     ap.add_argument("--baud", type=int, default=460800, help="baud rate (default 460800)")
     ap.add_argument("--build-dir", default=os.path.join(REPO_ROOT, "build"),
@@ -194,7 +194,7 @@ def main():
         return do_restore(args.port, args.baud, args.restore)
 
     print("=" * 70)
-    print(" OpenBreath flasher")
+    print(" DragonBreath flasher")
     print(" !! THIS OVERWRITES THE WHOLE DEVICE AND ERASES THE STOCK FIRMWARE !!")
     print(" There is NO way back to stock without a full backup, and BIGTREETECH")
     print(" does not publish stock images. The backup taken below is your ONLY")
@@ -215,15 +215,15 @@ def main():
         print(f"\n*** IMPORTANT: keep {path} safe — it is the ONLY way back to")
         print("*** stock. Copy it off this machine (cloud/USB) before continuing. ***")
 
-    print("\n[2/3] Ready to flash OpenBreath.")
+    print("\n[2/3] Ready to flash DragonBreath.")
     if not confirm("Proceed with flashing?"):
         print("Aborted. Your backup (if taken) is kept.")
         return 1
 
     rc = do_flash(args.port, args.baud, args.build_dir)
     if rc == 0:
-        print("\nDone. The board reboots into OpenBreath. On first boot with no saved")
-        print("Wi-Fi it starts an 'OpenPanda_XXXX' AP — connect and open http://192.168.4.1")
+        print("\nDone. The board reboots into DragonBreath. On first boot with no saved")
+        print("Wi-Fi it starts an 'DragonBreath_XXXX' AP — connect and open http://192.168.4.1")
     else:
         print("\nFlash FAILED. If the board is unresponsive, restore your backup:")
         print("  python3 tools/flash.py --restore <backup.bin>")

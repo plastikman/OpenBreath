@@ -199,7 +199,7 @@ static esp_err_t target_set(httpd_req_t *req)
     return httpd_resp_send(req, buf, n);
 }
 
-// POST /update — stream a new OpenBreath .bin into the inactive OTA slot, verify,
+// POST /update — stream a new DragonBreath .bin into the inactive OTA slot, verify,
 // set it as boot, and reboot. Auth-gated. SAFETY: refused while the heater is
 // armed/on — a reboot mid-heat leaves the SSR state undefined until re-init, so
 // the operator must turn the heater off first. Rollback (PENDING_VERIFY) means a
@@ -271,15 +271,15 @@ static esp_err_t update_post(httpd_req_t *req)
     if (err != ESP_OK)
         return ota_fail(req, "400 Bad Request", 0, "invalid firmware image");
 
-    // Identity check: only boot images that are actually OpenBreath — reject any
+    // Identity check: only boot images that are actually DragonBreath — reject any
     // other (even a valid ESP32-C3) app. The app descriptor's project_name comes
-    // from CMake project(openbreath).
+    // from CMake project(dragonbreath).
     esp_app_desc_t desc;
     if (esp_ota_get_partition_description(part, &desc) != ESP_OK)
         return ota_fail(req, "400 Bad Request", 0, "cannot read image descriptor");
-    if (strcmp(desc.project_name, "openbreath") != 0) {
-        ESP_LOGE(TAG, "OTA rejected: project_name='%s' (not openbreath)", desc.project_name);
-        return ota_fail(req, "400 Bad Request", 0, "not an OpenBreath image");
+    if (strcmp(desc.project_name, "dragonbreath") != 0) {
+        ESP_LOGE(TAG, "OTA rejected: project_name='%s' (not dragonbreath)", desc.project_name);
+        return ota_fail(req, "400 Bad Request", 0, "not an DragonBreath image");
     }
 
     if (esp_ota_set_boot_partition(part) != ESP_OK)
