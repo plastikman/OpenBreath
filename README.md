@@ -119,7 +119,8 @@ python3 tools/flash.py                 # backup stock, then flash OpenBreath
 python3 tools/flash.py --restore backups/stock-YYYYmmdd-HHMMSS.bin   # back to stock
 ```
 First boot with no stored WiFi starts an `OpenPanda_XXXX` AP + captive portal for
-provisioning.
+provisioning. The AP password is **`987654321`** (same as the stock Panda). Connect
+to it and a browser should pop the setup page automatically (or open `http://192.168.4.1`).
 
 **Updating OpenBreath:** once running, open the **Firmware update** link on the
 status page (the `/fw` page) and upload `build/openbreath.bin`. The image lands in
