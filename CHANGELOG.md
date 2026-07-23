@@ -7,7 +7,12 @@ below into the GitHub Release notes.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-07-23
+
 ### Added
+- **In-UI update notification** — on official (tagged) builds, the device `/fw`
+  page checks GitHub for a newer release and shows a download link + expected
+  SHA-256; you verify and flash it via the existing uploader (fully browser-side).
 - **Reproducible release pipeline** — pushing a `v*` tag builds in CI (pinned
   ESP-IDF v5.3.5) and publishes a GitHub Release with a single-file
   `-factory.bin` (first install, flash @ 0x0), the `.bin` application image (OTA),
