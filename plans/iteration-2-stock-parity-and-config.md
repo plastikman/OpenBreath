@@ -71,6 +71,13 @@ New component: `components/pb_X/{pb_X.c, include/pb_X.h, CMakeLists.txt}` with `
 
 ## Phase A — Configurable settings + real status LEDs (smallest, ship first)
 
+✅ **Shipped** — PR `feat/phase-a-settings-leds` (A1–A4). Two deviations from the spec below,
+both simplifications: (1) the Advanced/Safety card lives on the **status dashboard**
+(`STATUS_BODY`), not `config_page`, and is driven **client-side** from `GET /settings` — so
+`pb_portal` needs **no** `pb_heater` include / CMake dep after all. (2) `GET /settings` was
+added alongside `POST /settings` (bounds + current values in one read); `max_uri_handlers`
+12→14 covers both.
+
 **A1. Runtime settings inside `pb_heater` (sole SSR owner).**
 - `components/pb_heater/include/pb_heater.h`: rename `PB_HEATER_MAX_TARGET_C` → `..._C_DEFAULT` (70); **add** `PB_HEATER_ABS_MAX_TARGET_C 70.0f` and `PB_HEATER_MIN_TARGET_C 30.0f`; rename `PB_HEATER_COMMS_TIMEOUT_MS` → `..._MS_DEFAULT` and add `_MS_MIN (10*1000)` / `_MS_MAX (5*60*1000)`. **Leave `PB_HEATER_PTC_CUTOFF_C 105` and `PB_HEATER_CHAMBER_MAX_C 85` untouched.** Declare `pb_heater_set/get_max_target_c`, `pb_heater_set/get_comms_timeout_ms`, `pb_heater_load_config`. Raising the production target ceiling above 70 °C is a separate hardware-validation item: a nominal 80 °C target leaves only 5 °C below the fixed chamber trip, which is not enough margin without measured worst-case lag and overshoot.
 - `components/pb_heater/pb_heater.c`: add `s_max_target_c` (float) + `s_comms_timeout_us` (int64_t) guarded by the existing `s_mux`; copy `centi_to_c`/`c_to_centi` from `pv_policy.c`. `pb_heater_init` sets the *defaults* only (NO NVS — nvs isn't up yet). New `pb_heater_load_config()` opens `app_nvs` READONLY, reads+**clamps**+assigns under `s_mux` (NVS read outside the lock). Setters clamp (`≤ ABS_MAX`, timeout `[MIN,MAX]`), persist (keys below), assign under `s_mux`; `set_max_target_c` also pulls a live `s_target_c` down if it now exceeds the cap. Move `set_target`'s upper clamp *inside* `s_mux` to use `s_max_target_c`. Extend the tick snapshot (~`:161-165`) to also copy `s_comms_timeout_us`; compare against it at the watchdog (~`:198`).

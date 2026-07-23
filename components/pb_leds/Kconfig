@@ -1,0 +1,15 @@
+menu "DragonBreath LEDs"
+
+config PB_POWER_LED
+    bool "Drive the front-panel Power LED (GPIO21) — disables serial console TX"
+    default n
+    help
+      The front-panel "Power" LED is wired to GPIO21, which is also the UART0
+      console TX pin. Enable this to drive it as the heating indicator (matching
+      the stock firmware: on while heating). Doing so gives up runtime serial log
+      output on TX (USB flashing still works — that uses the ROM bootloader).
+
+      Leave DISABLED for development builds that need the serial console; enable
+      it for release builds. The release CI pipeline sets it via sdkconfig.release.
+
+endmenu

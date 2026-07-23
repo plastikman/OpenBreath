@@ -3,6 +3,7 @@
 #include "pb_heater.h"
 #include "pb_fan.h"
 #include "pb_ntc.h"
+#include "pb_leds.h"
 
 #include "esp_log.h"
 #include <math.h>
@@ -76,4 +77,19 @@ void pb_policy_tick(void)
     } else {
         pb_fan_set_level(s_requested_fan);
     }
+
+    // Heating indication, matching the stock panel: solid while heating, blinking
+    // on a latched safety fault (visible even while the fan keeps cooling a tripped
+    // chamber), off otherwise. pb_policy owns all LED indication; pb_heater drives
+    // no GPIO LED.
+    //   - "Power" (GPIO21) is the stock heating indicator — driven only in release
+    //     builds (CONFIG_PB_POWER_LED); in dev builds that pin is the console TX and
+    //     pb_leds skips it, so this call is a harmless no-op there.
+    //   - "On" (GPIO5) is driven the same way as an interim mode indicator until the
+    //     Phase B mode state machine owns Auto/On/Dry.
+    pb_led_pattern_t heat_pat = (pb_heater_is_faulted() || pb_heater_is_inhibited())
+                                    ? PB_LED_BLINK
+                                    : heat ? PB_LED_SOLID : PB_LED_OFF;
+    pb_leds_set(PB_LED_POWER, heat_pat);
+    pb_leds_set(PB_LED_ON, heat_pat);
 }

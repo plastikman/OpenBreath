@@ -24,6 +24,7 @@
 #include "pb_heater.h"
 #include "pb_fan.h"
 #include "pb_policy.h"
+#include "pb_leds.h"
 
 #include "esp_wifi.h"
 #include "esp_mac.h"
@@ -202,6 +203,7 @@ void app_main(void)
     ESP_ERROR_CHECK(pb_ntc_init());
     ESP_ERROR_CHECK(pb_fan_init());
     ESP_ERROR_CHECK(pb_policy_init());
+    ESP_ERROR_CHECK(pb_leds_start());       // indicator LEDs (pb_policy drives them)
 
     // Start the safety/telemetry loop FIRST — it must run regardless of the
     // network coming up (a blocking/hung network stack must never stop it).
@@ -211,6 +213,7 @@ void app_main(void)
     // Bring up networking. If a start call blocks under a flaky link, the control
     // loop above is already running, so safety + telemetry continue.
     nvs_init();
+    pb_heater_load_config();                 // apply persisted max-target + comms timeout (NVS is up now)
     brand_ap();                              // AP name = DragonBreath_XXXX
 #if defined(DB_WIFI_SSID) || defined(DB_MOONRAKER_HOST)
     seed_dev_config();

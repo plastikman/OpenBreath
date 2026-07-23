@@ -104,7 +104,9 @@ static esp_err_t status_get(httpd_req_t *req)
     const char *fr = pb_heater_fault_reason();
     if (fr) cJSON_AddStringToObject(o, "fault_reason", fr);
     else    cJSON_AddNullToObject(o, "fault_reason");
-    add_num1(o, "max", PB_HEATER_MAX_TARGET_C);
+    add_num1(o, "max", pb_heater_get_max_target_c());
+    add_num1(o, "max_abs", PB_HEATER_ABS_MAX_TARGET_C);
+    cJSON_AddNumberToObject(o, "comms_ms", pb_heater_get_comms_timeout_ms());
     cJSON_AddStringToObject(o, "version", esp_app_get_description()->version);
 
     char *out = cJSON_PrintUnformatted(o);
@@ -197,6 +199,81 @@ static esp_err_t target_set(httpd_req_t *req)
     int n = snprintf(buf, sizeof buf, "{\"target\":%.1f}", pb_heater_get_target_c());
     httpd_resp_set_type(req, "application/json");
     return httpd_resp_send(req, buf, n);
+}
+
+// Emit the current settings + their bounds as JSON (shared by GET /settings and
+// the response to a successful POST /settings).
+static esp_err_t settings_send(httpd_req_t *req)
+{
+    char buf[224];
+    int n = snprintf(buf, sizeof buf,
+        "{\"max\":%.1f,\"max_min\":%.1f,\"max_abs\":%.1f,"
+        "\"comms_ms\":%u,\"comms_ms_min\":%u,\"comms_ms_max\":%u}",
+        (double)pb_heater_get_max_target_c(),
+        (double)PB_HEATER_MIN_TARGET_C,
+        (double)PB_HEATER_ABS_MAX_TARGET_C,
+        (unsigned)pb_heater_get_comms_timeout_ms(),
+        (unsigned)PB_HEATER_COMMS_TIMEOUT_MS_MIN,
+        (unsigned)PB_HEATER_COMMS_TIMEOUT_MS_MAX);
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_send(req, buf, n);
+}
+
+// GET /settings — current runtime-configurable safety settings + their bounds.
+// Read-only, no auth (same as /status).
+static esp_err_t settings_get(httpd_req_t *req)
+{
+    return settings_send(req);
+}
+
+// Parse an unsigned integer (no sign, no junk, no overflow past u32).
+static bool parse_u32(const char *s, uint32_t *out)
+{
+    if (!s || !*s) return false;
+    char *end = NULL;
+    unsigned long v = strtoul(s, &end, 10);
+    if (end == s) return false;
+    while (*end == ' ' || *end == '\t' || *end == '\r' || *end == '\n') end++;
+    if (*end != '\0') return false;
+    *out = (uint32_t)v;
+    return true;
+}
+
+// POST /settings?max=<C>&comms_ms=<ms> — update either/both. Auth-gated. Each field
+// is optional; values are clamped to the safe envelope by pb_heater's setters (the
+// ceiling can never exceed 70 C; the comms deadman stays within [10s, 5min]). At
+// least one recognized field must be present.
+static esp_err_t settings_post(httpd_req_t *req)
+{
+    if (auth_reject(req)) return ESP_OK;
+
+    char q[96];
+    if (httpd_req_get_url_query_str(req, q, sizeof q) != ESP_OK) {
+        // Fall back to a query-style body ("max=60&comms_ms=30000").
+        int r = httpd_req_recv(req, q, sizeof q - 1);
+        if (r <= 0) { httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "no settings given"); return ESP_FAIL; }
+        q[r] = '\0';
+    }
+
+    bool applied = false;
+    char v[24];
+    if (httpd_query_key_value(q, "max", v, sizeof v) == ESP_OK) {
+        float m;
+        if (!parse_temp(v, &m)) { httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "bad max"); return ESP_FAIL; }
+        pb_heater_set_max_target_c(m);   // clamps + persists
+        applied = true;
+    }
+    if (httpd_query_key_value(q, "comms_ms", v, sizeof v) == ESP_OK) {
+        uint32_t ms;
+        if (!parse_u32(v, &ms)) { httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "bad comms_ms"); return ESP_FAIL; }
+        pb_heater_set_comms_timeout_ms(ms);   // clamps + persists
+        applied = true;
+    }
+    if (!applied) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "no known settings (max, comms_ms)");
+        return ESP_FAIL;
+    }
+    return settings_send(req);   // echo the clamped result
 }
 
 // POST /update — stream a new DragonBreath .bin into the inactive OTA slot, verify,
@@ -303,7 +380,7 @@ esp_err_t pb_httpd_start(void)
     httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
     cfg.lru_purge_enable = true;
     cfg.uri_match_fn = httpd_uri_match_wildcard;   // lets pb_portal add a "/*" captive catch-all
-    cfg.max_uri_handlers = 12;                     // control API + portal + captive
+    cfg.max_uri_handlers = 14;                     // control API + settings + portal + captive
     // The OTA handler hashes the image (mbedtls) with a 1 KB read buffer + the
     // app descriptor on-stack, which overflows the 4 KB default httpd task stack
     // (stack-protection panic). Give it headroom.
@@ -316,12 +393,16 @@ esp_err_t pb_httpd_start(void)
     httpd_uri_t hb     = { .uri = "/heartbeat", .method = HTTP_POST, .handler = heartbeat_post };
     httpd_uri_t rst    = { .uri = "/reset",     .method = HTTP_POST, .handler = reset_post };
     httpd_uri_t upd    = { .uri = "/update",    .method = HTTP_POST, .handler = update_post };
+    httpd_uri_t setg   = { .uri = "/settings",  .method = HTTP_GET,  .handler = settings_get };
+    httpd_uri_t setp   = { .uri = "/settings",  .method = HTTP_POST, .handler = settings_post };
     httpd_register_uri_handler(s_server, &status);
     httpd_register_uri_handler(s_server, &tgt);
     httpd_register_uri_handler(s_server, &hb);
     httpd_register_uri_handler(s_server, &rst);
     httpd_register_uri_handler(s_server, &upd);
-    ESP_LOGI(TAG, "HTTP API up :80 (GET /status; POST /target?t=<C>, /heartbeat, /reset, /update)");
+    httpd_register_uri_handler(s_server, &setg);
+    httpd_register_uri_handler(s_server, &setp);
+    ESP_LOGI(TAG, "HTTP API up :80 (GET /status,/settings; POST /target?t=<C>, /heartbeat, /reset, /update, /settings)");
     return ESP_OK;
 }
 

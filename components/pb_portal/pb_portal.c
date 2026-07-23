@@ -163,6 +163,12 @@ static const char STATUS_BODY[] =
     "<button type=button class=go style='width:auto;margin:0;padding:12px 18px' onclick='setT()'>Set</button></div>"
     "<button type=button id=off class=sec onclick='setOff()' disabled>Turn heater off</button>"
     "<button type=button class=sec id=rst style='display:none' onclick='doReset()'>Clear fault</button></div>"
+    "<div class=card><h2>Advanced / Safety</h2>"
+    "<label>Max target ceiling (&deg;C)</label><input id=smax type=number step=1>"
+    "<label>Comms watchdog (s) &mdash; heater latches off if the controller goes silent</label>"
+    "<input id=scomms type=number step=1>"
+    "<button type=button class=go style='margin-top:10px' onclick='saveSettings()'>Save settings</button>"
+    "<div id=smsg style='margin-top:.5em'></div></div>"
     "<p style='text-align:center'><small><a href='/setup'>Wi-Fi / printer setup</a>"
     " &middot; <a href='/fw'>Firmware update</a></small></p>"
     "<p style='text-align:center;margin-top:-6px'><small style='color:#6f6f6f'>"
@@ -183,6 +189,7 @@ static const char STATUS_BODY[] =
     // Reflect the live target (e.g. one set by Klipper) in the set-temp box, but
     // never while the user is typing in it. Keep the last value when off.
     "var tin=document.getElementById('tin');"
+    "if(s.max)tin.max=Math.round(s.max);"          // slider ceiling tracks the configured max
     "if(document.activeElement!==tin&&s.target>0){tin.value=Math.round(s.target);}"
     "u('heating',s.heating?'ON':'off');"
     "var ob=document.getElementById('off');var on=s.target>0;ob.disabled=!on;"
@@ -204,7 +211,26 @@ static const char STATUS_BODY[] =
     ".catch(function(){iOwn=false;refresh();});}"
     "function setOff(){iOwn=false;post('/target?t=0').then(refresh);}"
     "function doReset(){post('/reset').then(refresh);}"
-    "refresh();setInterval(refresh,2000);"
+    // Advanced/Safety: load current settings + their bounds from /settings, and
+    // save edits back. The device clamps everything (ceiling <= 70 C, timeout
+    // 10s-5min), so out-of-range entries come back corrected.
+    "function loadSettings(){fetch('/settings').then(function(r){return r.json();}).then(function(s){"
+    "var mx=document.getElementById('smax');mx.min=s.max_min;mx.max=s.max_abs;"
+    "if(document.activeElement!==mx)mx.value=Math.round(s.max);"
+    "var cm=document.getElementById('scomms');cm.min=Math.round(s.comms_ms_min/1000);cm.max=Math.round(s.comms_ms_max/1000);"
+    "if(document.activeElement!==cm)cm.value=Math.round(s.comms_ms/1000);"
+    "}).catch(function(){});}"
+    "function saveSettings(){var mx=document.getElementById('smax').value;"
+    "var cm=Math.round(parseFloat(document.getElementById('scomms').value)*1000);"
+    "var m=document.getElementById('smsg');"
+    "post('/settings?max='+encodeURIComponent(mx)+'&comms_ms='+encodeURIComponent(cm))"
+    ".then(function(r){return r.json().then(function(j){return{s:r.status,j:j};})"
+    ".catch(function(){return{s:r.status,j:{}};});})"
+    ".then(function(x){if(x.s==200){m.innerHTML='<small>Saved \\u2713 (max '+x.j.max+'\\u00b0C, timeout '"
+    "+Math.round(x.j.comms_ms/1000)+'s)</small>';loadSettings();refresh();}"
+    "else{m.innerHTML='<small>Save failed: '+((x.j&&x.j.error)||('HTTP '+x.s))+'</small>';}})"
+    ".catch(function(){m.innerHTML='<small>Save failed (connection).</small>';});}"
+    "refresh();setInterval(refresh,2000);loadSettings();"
     "</script></body></html>";
 
 // Dedicated firmware-update page (GET /fw) — DragonBreath OTA only, its own page so

@@ -42,6 +42,10 @@ jobs:
           esp_idf_version: v5.3.5
           target: esp32c3
           path: '.'
+          # Release builds layer sdkconfig.release on top of the defaults to enable
+          # CONFIG_PB_POWER_LED (drives the front-panel Power LED on GPIO21, giving up
+          # console TX). Dev builds (plain `idf.py build`) omit it and keep the console.
+          command: idf.py -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.release" build
 
       - name: Package release artifacts
         env:

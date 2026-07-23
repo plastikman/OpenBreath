@@ -36,10 +36,15 @@
 // the thermistor resistance (see pb_ntc). level 0 -> 82 kOhm, level 1 -> 33 kOhm.
 #define PB_GPIO_RREF_STRAP   GPIO_NUM_19
 
-// -------- Button LEDs (active-high via 1K) ----------------------------------
-#define PB_GPIO_LED_K1       GPIO_NUM_6
-#define PB_GPIO_LED_K2       GPIO_NUM_5
-#define PB_GPIO_LED_K3       GPIO_NUM_4
+// -------- Front-panel LEDs (active-high, direct push-pull; NOT a matrix) -----
+// Confirmed by stock-firmware RE (byte-identical across stock 1.0.1-1.0.4).
+// K1/K2/K3 are the three mode LEDs; the "Power" LED is on GPIO21 — which is also
+// the UART0 console TX pin, so it is only driven when CONFIG_PB_POWER_LED is set
+// (release builds); otherwise GPIO21 stays the serial console. See pb_leds.
+#define PB_GPIO_LED_K1       GPIO_NUM_6    // "Auto"
+#define PB_GPIO_LED_K2       GPIO_NUM_5    // "On"
+#define PB_GPIO_LED_K3       GPIO_NUM_4    // "Dry"
+#define PB_GPIO_LED_POWER    GPIO_NUM_21   // "Power" (shared with UART0-TX)
 
 // -------- Buttons (not implemented in v0) -----------------------------------
 #define PB_GPIO_BTN_K2       GPIO_NUM_0    // shared with TH0/chamber NTC

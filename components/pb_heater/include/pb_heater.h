@@ -10,14 +10,26 @@
 #pragma once
 
 #include <stdbool.h>
+#include <stdint.h>
 #include "esp_err.h"
 
 // --- Safety limits ----------------------------------------------------------
-#define PB_HEATER_MAX_TARGET_C   70.0f    // hard cap on the settable set-point
+// Fixed hardware-safety cutoffs — NEVER user-configurable.
 #define PB_HEATER_PTC_CUTOFF_C   105.0f   // element over-temp -> force off (stock parity)
 #define PB_HEATER_CHAMBER_MAX_C  85.0f    // chamber over-temp -> force off
 #define PB_HEATER_HYSTERESIS_C   1.0f
-#define PB_HEATER_COMMS_TIMEOUT_MS  (5 * 60 * 1000)  // no controller for 5 min -> off
+// Settable set-point ceiling: default + absolute cap + floor. Raising the
+// production cap above 70 C is a separate hw-validation item (80 C leaves only
+// 5 C below the fixed 85 C chamber trip — not enough margin without measured
+// worst-case lag/overshoot), so ABS_MAX stays at 70.
+#define PB_HEATER_MAX_TARGET_C_DEFAULT  70.0f
+#define PB_HEATER_ABS_MAX_TARGET_C      70.0f
+#define PB_HEATER_MIN_TARGET_C          30.0f
+// Comms deadman: no controller for this long while heating -> latch off. Runtime-
+// configurable within [MIN, MAX]; never disabled or extended beyond MAX (5 min).
+#define PB_HEATER_COMMS_TIMEOUT_MS_DEFAULT  (5 * 60 * 1000)
+#define PB_HEATER_COMMS_TIMEOUT_MS_MIN      (10 * 1000)
+#define PB_HEATER_COMMS_TIMEOUT_MS_MAX      (5 * 60 * 1000)
 
 // Bring up the SSR GPIO in a guaranteed-OFF state. Call before anything can
 // request heat. Idempotent.
@@ -32,6 +44,20 @@ esp_err_t pb_heater_init(void);
 //                           HTTP 409. Heat is never queued behind a fault latch.
 esp_err_t pb_heater_set_target_c(float target_c);
 float pb_heater_get_target_c(void);
+
+// --- Runtime-configurable, persisted settings (pb_heater is the sole owner) ---
+// Load persisted settings from NVS (namespace app_nvs). MUST be called AFTER
+// nvs_init() — pb_heater_init() only sets conservative defaults (nvs isn't up
+// yet). Values are clamped on read.
+void  pb_heater_load_config(void);
+// Settable set-point ceiling. Setter clamps to [MIN_TARGET_C, ABS_MAX_TARGET_C],
+// persists it, and pulls a live target down if it now exceeds the cap.
+esp_err_t pb_heater_set_max_target_c(float max_c);
+float     pb_heater_get_max_target_c(void);
+// Comms deadman timeout. Setter clamps to [MS_MIN, MS_MAX] (never disabled or
+// extended past 5 min) and persists it.
+esp_err_t pb_heater_set_comms_timeout_ms(uint32_t ms);
+uint32_t  pb_heater_get_comms_timeout_ms(void);
 
 // Feed the comms watchdog: call whenever a live controller link is confirmed
 // (Moonraker connected, or a fresh command). If not called within
