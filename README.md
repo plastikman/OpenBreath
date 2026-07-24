@@ -1,8 +1,7 @@
 # DragonBreath
 
 Open firmware for the **BIGTREETECH Panda Breath** chamber heater (ESP32-C3),
-replacing the stock cloud integration with **Moonraker/Klipper** (and Home
-Assistant) control.
+providing an open **Moonraker/Klipper** integration and local web control.
 
 Sibling to [OpenVent](https://github.com/justinh-rahb/OpenVent) — part of an
 open-firmware **family for the BTT Panda line** that shares a common core.
@@ -20,7 +19,8 @@ re-implemented.
 
 **Docs:** full feature set → [`docs/FEATURES.md`](docs/FEATURES.md) · control API →
 [`docs/api-v2.md`](docs/api-v2.md) · safety model → [`docs/SAFETY.md`](docs/SAFETY.md) ·
-hardware → [`docs/HARDWARE.md`](docs/HARDWARE.md).
+OEM parity → [`docs/OEM_PARITY.md`](docs/OEM_PARITY.md) · hardware →
+[`docs/HARDWARE.md`](docs/HARDWARE.md).
 
 ## Status
 | Component | State |
@@ -32,7 +32,8 @@ hardware → [`docs/HARDWARE.md`](docs/HARDWARE.md).
 | `pb_policy` | ✅ Authoritative mode/target/lease state machine |
 | Network core: `pv_wifi` / `pv_evlog` / `pv_moonraker` | ✅ Referenced from OpenVent (submodule); WiFi + Moonraker validated on hardware |
 | Portal / status dashboard | ✅ Captive provisioning + v2 dashboard (manual / auto / dry / advanced cards, SSE-driven) |
-| Status LEDs (`pb_leds`) | ✅ On + Power (GPIO21) heat/fault indicators, **hardware-validated**; matches stock (Power on GPIO21 is a release-build option — it shares the console-TX pin) |
+| Status LEDs (`pb_leds`) | 🚧 Four-output pattern driver works; On + release-only Power indicate armed heat/fault. Auto/Dry mode indication is not wired to policy yet. |
+| Front-panel buttons | 🚧 All four inputs are mapped and live-probed; no runtime button driver, debounce, or actions exist yet. |
 | HTTP control API (`pb_httpd`) | ✅ API v2 (JSON command/state + SSE, CSRF-gated) — shipped in v0.3.0 |
 | Klipper-side helper (M141 / Fluidd) | ✅ [dragonbreath-klipper](https://github.com/plastikman/dragonbreath-klipper) migrated to API v2; deploy lockstep with firmware ≥ v0.3.0 |
 | Auto (follow-bed) / filament-dry modes | 🚧 Shipped in the state machine + UI (v0.3.0); end-to-end hardware soak in progress |

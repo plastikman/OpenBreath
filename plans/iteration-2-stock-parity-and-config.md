@@ -1,9 +1,9 @@
-# OpenBreath — Iteration 2: Stock-Panda parity + configurability
+# DragonBreath — Iteration 2: Stock-Panda parity + configurability
 
 ## Context
 The Iteration 1 foundation is operational and hardware-validated: heater and fan
 control, sensor monitoring, captive provisioning, dashboard/API, web OTA, and
-Klipper/Fluidd integration via openbreath-klipper. Iteration 2 adds stock-parity
+Klipper/Fluidd integration via dragonbreath-klipper. Iteration 2 adds stock-parity
 behavior while also closing remaining safety, state-synchronization, testing,
 and release-engineering gaps. The alpha API and UI are not frozen and may
 change incompatibly before beta.
@@ -20,11 +20,14 @@ Decisions locked with the user: **phased plan**, **all four buttons usable**
 > **Status (2026-07-23):** Phase 0 ✅ (v0.2.0) · Phase A ✅ (v0.3.0) · Phase B ✅ shipped
 > in v0.3.0 & hardware-validated — **except B2** (thermal-purge + NVS-persisted fault
 > latch), deferred · Phase C ⬜ not started (buttons — all 4 pins mapped, ready to build) · Phase D 🟡 partial (v2 dashboard
-> covers D2/D3; D1 shell + D4 parity matrix open) · Phase E 🟡 partial (release/build CI +
+> covers D2/D3; D4 parity matrix documented; D1 shell open) · Phase E 🟡 partial (release/build CI +
 > host tests; broader static-analysis/sim/dev-board target open). **Next candidates:** B2
 > safety hardening, Phase C button, or Phase D1/D4 dashboard polish.
 
-Not covered / explicitly out of scope: stock OEM WebSocket protocol + web UI, Bambu binding, K1/K2 buttons, the stock `filtertemp`/`heater_temp` auto params (OpenBreath has no filter sensor; the PTC/chamber cutoffs already bound element temp).
+Not covered / explicitly out of scope: stock OEM WebSocket protocol + web UI,
+Bambu binding, and the stock `filtertemp`/`heater_temp` auto parameters
+(DragonBreath has no filter sensor; the PTC/chamber cutoffs already bound element
+temperature).
 
 ## Phase 0 — Product identity + release correctness
 
@@ -69,7 +72,7 @@ All under `external/OpenVent/firmware/components/` (present via `EXTRA_COMPONENT
 - `pv_status_led/` — own task, OFF/SOLID/BLINK, active-high → template for **pb_leds**.
 - `pv_button/` — 10 ms poll, 20 ms debounce, short/long-press, single callback → template for **pb_buttons**.
 - `pv_policy.c` — NVS centi-degree-in-u32 float storage, `load_persisted()`, validating setters under a lock → template for **settings + mode params**.
-- `pv_evlog/` — 64-entry event ring (unused in OpenBreath) → button/mode/fault events.
+- `pv_evlog/` — 64-entry event ring (unused in DragonBreath) → button/mode/fault events.
 Port to `pb_board.h` pins; these reference OpenVent GPIOs, so they are code templates, not drop-ins.
 
 ## Component/registration pattern (every phase)
@@ -118,16 +121,22 @@ added alongside `POST /settings` (bounds + current values in one read); `max_uri
 >   device-issued lease + stale-lease rejection · **B7** API v2 (`/api/v2/info|state|health|events(SSE)|command|heartbeat`;
 >   alpha `/status`,`/target`,`/heartbeat`,`/reset` removed) · **B8** local POWER_ON 12 h cap ·
 >   **B9** dashboard + helper consume the snapshot/SSE stream.
-> - **Validated on hardware (2026-07-23):** `M141 S45` → POWER_ON + Klipper lease + heat;
->   DRYING timed heat; AUTO arms (bed-gated, engages when Moonraker bed ≥ threshold).
-> - **⚠ Partial / carried forward — B2 NOT done:** the thermal-purge latch (engage ≥40 °C,
->   hysteresis release) and the **NVS-persisted** fault latch are unimplemented. `thermal_purge`
+> - **Exercised on hardware (2026-07-23):** `M141 S45` → POWER_ON + Klipper lease + heat;
+>   the policy/API can enter DRYING and arm AUTO. The shipped dashboard controls are
+>   **not yet accepted as end-to-end validated** after a user report that neither action
+>   appeared to take effect; their feedback/control wiring remains follow-up work.
+> - **⚠ Partial / carried forward — B2 NOT done:** the opt-in thermal-purge policy
+>   (engage ≥40 °C, hysteresis release) and the **NVS-persisted** fault latch are
+>   unimplemented. `thermal_purge`
 >   in the snapshot is a *heuristic* derived from the v0.2.0 post-print fan cooldown (#6), not
 >   the dedicated purge latch; the fault latch is **RAM-only** (a reboot clears it) — persisting
 >   it is deferred, independently-reviewable safety work.
 > - **LEDs (from Phase A, finalized here):** the panel is 4 direct active-high GPIOs
 >   (Power=GPIO21 — the console-TX pin, so release-only via `CONFIG_PB_POWER_LED`+`sdkconfig.release`;
 >   Auto=6/On=5/Dry=4), *not* a 3-LED set — determined by stock-firmware RE.
+>   The current policy drives only On + release-only Power (solid while a target
+>   is armed, blinking on fault). Auto and Dry remain off until Phase C assigns
+>   their mode/button semantics.
 
 **Delivery split.** Land this phase as a stacked series so safety/control review
 is not mixed with HTTP parsing:
@@ -169,9 +178,16 @@ safety work and must not be hidden inside transport parsing.
   none may retain a private hardware-control state.
 
 **B2. Thermal purge + persistent fault latch.**
-- Add a thermal-purge latch: engage when either chamber or PTC temperature
-  reaches 40 °C; disengage only after both fall below a documented hysteresis
-  boundary. Purge overrides mode, target, printer state, and user fan requests.
+- Add an NVS-backed purge policy with two choices:
+  - `session` (**default**) preserves the current behavior: purge only after heat
+    was active in the current boot/session, then stop below 40 °C.
+  - `temperature` (opt-in) latches purge when either chamber or PTC reaches
+    40 °C and releases only after both fall below 37 °C. It is recomputed from
+    valid sensor readings after reboot, so the transient latch itself need not
+    be persisted.
+- While either purge policy is active, airflow overrides mode, target, printer
+  state, and ordinary user fan requests. Changing the preference must never
+  affect fault airflow.
 - Any fault forces heater OFF, fan ON continuously, and rejects heat/mode
   commands.
 - Persist the fault latch and reason in NVS on latch transitions. Power cycling
@@ -236,13 +252,13 @@ restores its inhibited state, never its prior target.
 local mode is unbounded (AUTO is bounded by live Moonraker state, DRYING by its
 timer).
 
-**B9. Observers.** Dashboard and openbreath-klipper consume the canonical
+**B9. Observers.** Dashboard and dragonbreath-klipper consume the canonical
 snapshot/event stream, including mode, drying countdown, revision, source,
 lease, and inhibit state. A physical or safety action must appear promptly in
 both and invalidate any stale local ownership.
 
 **Files:** `pb_policy.{c,h}` + CMake (+`esp_timer`,`nvs_flash`),
-`main/app_main.c`, `pb_httpd.{c,h}`, `pb_portal.c`, and openbreath-klipper's
+`main/app_main.c`, `pb_httpd.{c,h}`, `pb_portal.c`, and dragonbreath-klipper's
 transport/state adapter.
 
 ---
@@ -255,7 +271,8 @@ transport/state adapter.
 > prerequisite is already satisfied (`pb_leds` owns the mode LEDs GPIO4/5/6 and, in
 > release builds, Power/GPIO21). **Boot-strap caveat:** Power(9)/Auto(8)/Dry(2) are
 > strapping pins (GPIO9 = ROM download-mode) — don't hold a button at power-on;
-> On(10) is the only non-strap.
+> On(10) is the only non-strap. No runtime code currently configures or reads
+> these inputs; without `pb_buttons`, every physical press is a no-op.
 
 **C1. `pb_buttons` (new component).** Port `pv_button`'s state machine (10 ms poll task, 20 ms debounce, long-press 2 s) behind a per-button table with an `active_low` field. v1 table = **all four**: `PB_GPIO_BTN_POWER`=9, `_AUTO`=8, `_ON`=10, `_DRY`=2 — each `GPIO_MODE_INPUT` + internal **pull-up** (never pull-down — 9/8/2 are straps that must be high at reset), poll-only. API `pb_buttons_start(cb)`, `pb_button_cb_t(id, ev)` with `id ∈ {POWER, AUTO, ON, DRY}`; SHORT on release, LONG once (suppress trailing short). REQUIRES `driver pb_board` (decoupled — no heater/policy link).
 
@@ -301,7 +318,7 @@ already probed 2026-07-23):**
 > mode / drying / OFF / fault-reset controls with success/rejection/stale-ownership
 > feedback; setup + OTA on secondary pages) are largely covered by the SSE-driven cards.
 > **Open:** **D1** (reusable component shell + clean narrow-iframe fit — still the single
-> utility page) and **D4** (explicit OEM parity matrix).
+> utility page). **D4** is documented in [`docs/OEM_PARITY.md`](../docs/OEM_PARITY.md).
 
 **D1. Dashboard shell.** Replace the growing utility page with reusable
 components that remain usable standalone and fit a narrow Fluidd/Mainsail
@@ -316,9 +333,9 @@ fault-reset controls. Show command success, rejection, stale ownership,
 connection loss, and external button/safety actions. Keep setup and OTA on
 secondary pages.
 
-**D4. Parity matrix.** Track every OEM feature as implemented, planned,
-intentionally changed, intentionally omitted, or unverified. The current
-exclusions remain explicit. Fan-only filtration is a possible OpenBreath
+**D4. Parity matrix.** ✅ [`docs/OEM_PARITY.md`](../docs/OEM_PARITY.md) tracks
+every OEM feature as implemented, planned, intentionally changed, intentionally
+omitted, or unverified. Fan-only filtration remains a possible DragonBreath
 enhancement, not required parity until OEM behavior confirms it.
 
 ---
@@ -360,7 +377,9 @@ pre-release qualification gate.
 - **SSR single-writer:** only `control_task`'s `ssr_set()` drives GPIO18. Every cross-task "off" is a mux-guarded latch that converges on the next tick (≤500 ms).
 - **No unbounded unattended local heat:** AUTO bounded by live Moonraker data, DRYING by its ≤12 h timer, local POWER_ON by the runtime cap; boot never self-arms.
 - Comms deadman is configurable from 10 s to 5 min but never disabled or extended beyond five minutes for remote POWER_ON. It is self-fed only while a bounded local mode's liveness precondition holds — and even then it only defeats the communications timeout, never the over-temp/sensor cutoffs.
-- **Residual-heat purge:** the fan remains ON above the 40 °C purge threshold (with hysteresis), even after target/mode OFF.
+- **Residual-heat purge:** session-gated cooldown remains the default. An explicit
+  persisted `temperature` policy keeps the fan ON above 40 °C (37 °C release),
+  including after reboot; fault airflow is unconditional in either policy.
 - **Persistent faults:** fault state survives power loss; active heat state, deadlines, and leases never do. A faulted boot is heater OFF, fan ON, commands inhibited.
 - **One authoritative state:** hardware, API, dashboard, Klipper, buttons, watchdog, and safety logic consume the same policy snapshot. No stale client/reconnect path may restore heat.
 - Physical OFF, watchdog, and safety actions invalidate remote ownership. Re-arming always requires a fresh command.
@@ -371,7 +390,7 @@ pre-release qualification gate.
 Update `README.md` status table + `docs/SAFETY.md`: the configurable target cap
 (bounded by the validated 70 °C production ceiling; 85/105 fixed), the
 boot-OFF/no-resume deviation from stock, persistent-fault and thermal-purge
-behavior, the mode set, API/lease semantics, K3 button semantics, and LED
+behavior, the mode set, API/lease semantics, all four button semantics, and LED
 meanings. Clearly distinguish first install, OTA update, and stock restore;
 state the tested board revisions and known limitations. Maintain a changelog and
 generate release posts from a repeatable template rather than ad hoc prose.
@@ -386,15 +405,15 @@ product-neutral ESP-IDF component containing:
 - Common API state/command/event structures and authentication hooks.
 - OTA/rollback, event logging, and a responsive UI shell/component library.
 
-OpenVent and OpenBreath retain branding, GPIO/board maps, sensors/actuators,
+OpenVent and DragonBreath retain branding, GPIO/board maps, sensors/actuators,
 safety policy, product modes/thresholds, and button mappings. Both consumers pin
 a core revision and build it in CI.
 
 ## Verification (end-to-end, per phase)
-Build: `cd ~/git/OpenBreath && idf.py build`; flash `idf.py -p /dev/ttyUSB0 flash`. Device on the bench at `10.168.2.53`.
-- **0:** all product-visible names are OpenBreath; a tagged CI release produces a complete install bundle + OTA image with a manifest whose hashes match the downloaded files.
+Build: `cd ~/git/DragonBreath && idf.py build`; flash `idf.py -p /dev/ttyUSB0 flash`. Device on the bench at `10.168.2.53`.
+- **0:** all product-visible names are DragonBreath; a tagged CI release produces a complete install bundle + OTA image with a manifest whose hashes match the downloaded files.
 - **A:** `max=90` → clamps to 70; `comms_ms=5000` → clamps to 10000; `comms_ms=3600000` → clamps to 300000; lower `max` below an armed target → target pulled down; dashboard input `max` tracks state; force a fault → K1 blinks; over-temp cutoffs unchanged.
-- **B:** each mode drives the target; AUTO engages at the bed threshold and fails to 0 when Moonraker drops; drying counts down, auto-offs, and hard-caps at 12 h; reboot → OFF (no resume); 40 °C purge keeps the fan running after target OFF; fault → power-cycle restores inhibited/fan-ON state; stale lease/reconnect cannot restore heat; over-temp still trips; `M141 S45` still heats (= POWER_ON). Verify through the versioned state/command/event API.
+- **B:** each mode drives the target; AUTO engages at the bed threshold and fails to 0 when Moonraker drops; drying counts down, auto-offs, and hard-caps at 12 h; reboot → OFF (no resume); default `session` purge never starts from ambient temperature alone; opt-in `temperature` purge engages at 40 °C, releases at 37 °C, and re-engages after reboot while still hot; fault airflow remains ON under both settings; fault → power-cycle restores inhibited/fan-ON state; stale lease/reconnect cannot restore heat; over-temp still trips; `M141 S45` still heats (= POWER_ON). Verify through the versioned state/command/event API.
 - **C:** the bench checklist above.
 - **D:** exercise every control from standalone and narrow iframe layouts; button/Klipper/safety changes appear promptly and no stale UI state reasserts a command.
 - **E:** static/unit/simulation suites pass; dev-board HIL proves injected failure/ownership scenarios; real-Panda release matrix passes.
@@ -407,7 +426,7 @@ traceable to the tagged source.
 1. Phase 0: identity and release correctness. ✅ **Done — v0.2.0** (PRs #3, #4, #7).
 2. Phase A: bounded settings and verified LEDs.
 3. Phase B: authoritative state/API, modes, leases, thermal purge, and persistent faults.
-4. Phase C: K3-only physical control.
+4. Phase C: all-four-button physical control.
 5. Phase D: responsive dashboard and remaining intentional parity.
 6. Phase E: complete CI, simulation, dev-board HIL, and real-device qualification.
 7. Extract/version the shared core after the state/API seams stabilize.
