@@ -191,7 +191,15 @@ svg.icon{ width: 20px; height: 20px; fill: none; stroke: currentColor;
 .app[data-state="drying"] .state-light{ background: var(--viz-series-1); }
 .app[data-state="waiting"] .state-light{ background: var(--viz-series-3); }
 .app[data-state="fault"] .state-light{ background: var(--destructive); }
-.summary{ min-height: 36px; color: var(--muted-foreground); font-size: 12px; }
+.summary{ min-height: 18px; color: var(--muted-foreground); font-size: 12px; }
+.status-detail{ margin: 4px 0; min-height: 0; flex: 1 1 auto; overflow: auto;
+  display: flex; flex-direction: column; gap: 2px; font-size: 12px; }
+.status-detail > div{ display: flex; align-items: baseline; justify-content: space-between;
+  gap: 10px; padding: 3px 0; border-bottom: 1px solid var(--border); }
+.status-detail > div:last-child{ border-bottom: 0; }
+.status-detail dt{ color: var(--muted-foreground); flex: none; }
+.status-detail dd{ margin: 0; text-align: right; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .actions{ display: flex; gap: 6px; margin-top: auto; }
 .actions .btn{ flex: 1; }
 
@@ -393,6 +401,14 @@ svg.icon{ width: 20px; height: 20px; fill: none; stroke: currentColor;
           <h3>System status</h3>
           <div class="state"><i class="state-light"></i><span id="db-status">--</span></div>
           <div class="summary" id="db-summary"></div>
+          <dl class="status-detail">
+            <div><dt>Fan</dt><dd id="db-fan">--</dd></div>
+            <div><dt>Controller</dt><dd id="db-controller">--</dd></div>
+            <div id="db-auto-row" hidden><dt>Auto</dt><dd id="db-auto">--</dd></div>
+            <div id="db-drying-row" hidden><dt>Drying</dt><dd id="db-drying">--</dd></div>
+            <div><dt>Printer</dt><dd id="db-printer">--</dd></div>
+            <div><dt>Fault</dt><dd id="db-fault">--</dd></div>
+          </dl>
           <div class="actions">
             <button class="btn btn-sm" type="button" id="db-clear" hidden><svg class="icon"><use href="#i-refresh"/></svg> Clear fault</button>
             <button class="btn btn-primary btn-sm" type="button" id="db-stop" disabled><svg class="icon"><use href="#i-power"/></svg> Stop</button>
@@ -752,6 +768,22 @@ svg.icon{ width: 20px; height: 20px; fill: none; stroke: currentColor;
     if(c){ c.setAttribute('aria-label', online?'Connection: online':'Connection: offline'); c.title = online?'Online':'Offline'; }
   }
 
+  function sourceLabel(src){
+    return ({web:'Web UI', klipper:'Klipper', button:'Front panel', boot:'—',
+             safety:'Safety', watchdog:'Watchdog'})[src] || src || '—';
+  }
+  function fanLabel(s){
+    var f=s.fan||{}, why=({heater:'heating', thermal_purge:'cooldown purge',
+                           requested:'manual', fault:'safety airflow'})[f.reason];
+    if(f.reason==='off' || (!why && !f.effective_percent)) return 'Off';
+    return 'On — '+(why||f.reason)+(f.effective_percent? ' ('+f.effective_percent+'%)':'');
+  }
+  function controllerLabel(s){
+    var l=(s.control||{}).lease||{};
+    if(l.active) return sourceLabel(s.source)+(l.owner? ' ('+l.owner+')':'');
+    return s.mode==='off' ? '—' : sourceLabel(s.source);
+  }
+
   function apply(s){
     if(!s || s.api_version!==2) return;
     if(last && s.boot_id===last.boot_id && s.state_revision<rev) return;
@@ -768,6 +800,22 @@ svg.icon{ width: 20px; height: 20px; fill: none; stroke: currentColor;
     app.setAttribute('data-state', st);
     u('db-status', statusLabel(st, s));
     u('db-summary', summary(st, s));
+
+    /* At-a-glance detail rows — all from the SSE snapshot. */
+    u('db-fan', fanLabel(s));
+    u('db-controller', controllerLabel(s));
+    var autoRow = s.mode==='auto';
+    $('db-auto-row').hidden = !autoRow;
+    if(autoRow) u('db-auto', (s.environment.auto_engaged?'engaged':'waiting')
+      +' @ bed ≥'+Math.round(s.environment.auto_bed_threshold_c)+' °C');
+    var dryRow = s.drying.active;
+    $('db-drying-row').hidden = !dryRow;
+    if(dryRow) u('db-drying', fmtDur(s.drying.remaining_seconds)+' left');
+    u('db-printer', s.environment.moonraker_connected
+      ? 'connected'+(s.environment.bed_temperature_c!=null ? ' · bed '+Math.round(s.environment.bed_temperature_c)+' °C' : '')
+      : 'not connected');
+    u('db-fault', s.safety.inhibited ? ('inhibited: '+(s.safety.reason||'unknown'))
+      : s.safety.fault_latched ? ('latched: '+(s.safety.reason||'unknown')) : 'none');
 
     /* progress bar: chamber vs. effective target */
     var pct=0;
