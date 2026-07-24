@@ -41,6 +41,41 @@ pb_ntc_status_t pb_ntc_last_status(pb_ntc_channel_t ch);
 // NAN if no valid reading yet. Fed by pb_ntc_read on each OK sample.
 float pb_ntc_smoothed_c(pb_ntc_channel_t ch);
 
+// --- Per-channel temperature calibration (SAFETY-BOUNDED) -------------------
+// A user-settable offset (°C) added to every calibrated reading so a mis-reading
+// sensor can be corrected. The SAME calibrated value is returned to display,
+// control regulation, AUTO, and the over-temp cutoffs — one consistent number.
+//
+// The offset is HARD-CLAMPED to [-PB_NTC_OFFSET_MAX_C, +PB_NTC_OFFSET_MAX_C] on
+// every set AND on NVS load. Because the bound is ±5 °C, the fixed cutoffs can
+// shift by at most 5 °C (chamber trips at ≥80 °C worst case, PTC at ≥100 °C worst
+// case); calibration can never disable a fault or defeat the hardware backstops
+// (see docs/SAFETY.md). The clamp is defined here as a pure function so it can be
+// unit-tested and reused by both the read path and the NVS loader.
+#define PB_NTC_OFFSET_MAX_C  5.0f
+
+static inline float pb_ntc_clamp_offset_c(float v)
+{
+    if (v != v) return 0.0f;                                 // NaN -> no offset
+    if (v < -PB_NTC_OFFSET_MAX_C) return -PB_NTC_OFFSET_MAX_C;  // also traps -Inf
+    if (v >  PB_NTC_OFFSET_MAX_C) return  PB_NTC_OFFSET_MAX_C;  // also traps +Inf
+    return v;
+}
+
+// Load persisted per-channel offsets from NVS (namespace app_nvs). MUST be called
+// AFTER nvs_init(). Every loaded value is passed through the ±5 °C clamp, so a
+// corrupt / hand-edited / out-of-range stored value clamps — it is never applied
+// raw. Missing keys default to 0.
+void pb_ntc_load_calibration(void);
+
+// Set a channel's calibration offset (°C). The value is clamped to
+// [-PB_NTC_OFFSET_MAX_C, +PB_NTC_OFFSET_MAX_C] and then persisted to NVS.
+// Returns ESP_ERR_INVALID_ARG for an unknown channel.
+esp_err_t pb_ntc_set_offset_c(pb_ntc_channel_t ch, float offset_c);
+
+// Current (clamped) calibration offset for the channel, in °C.
+float pb_ntc_get_offset_c(pb_ntc_channel_t ch);
+
 #ifdef CONFIG_PB_HIL_DEVBOARD
 // Dev-board HIL backend. Production builds do not expose or compile this API.
 void pb_ntc_hil_set(pb_ntc_channel_t ch, pb_ntc_status_t status, float temp_c);

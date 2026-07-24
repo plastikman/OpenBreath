@@ -477,9 +477,10 @@ svg.icon{ width: 20px; height: 20px; fill: none; stroke: currentColor;
         </div>
       </section>
 
-      <!-- Settings (U3): safety limits, network/printer + control token, logs,
-           maintenance. Wired to /settings, /api/v2/token, /api/v2/logs,
-           /api/v2/info, /api/v2/restart, /api/v2/factory-reset. -->
+      <!-- Settings (U3/U4): safety limits, sensor calibration, status-LED enable,
+           network/printer + control token, logs, maintenance. Wired to /settings,
+           /api/v2/calibration, /api/v2/token, /api/v2/logs, /api/v2/info,
+           /api/v2/restart, /api/v2/factory-reset. -->
       <section class="page-only settings" data-page-content="settings">
 
         <!-- Safety limits & watchdog (GET/POST /settings). -->
@@ -512,6 +513,50 @@ svg.icon{ width: 20px; height: 20px; fill: none; stroke: currentColor;
           <p class="set-note">The fixed 105&nbsp;°C PTC and 85&nbsp;°C chamber cutoffs are hardware safety limits and cannot be changed here.</p>
           <button class="btn btn-primary btn-block" type="button" id="s-safety-save"><svg class="icon"><use href="#i-thermometer"/></svg> <span>Save safety limits</span></button>
           <div class="mode-feedback" id="s-safety-msg" role="status" aria-live="polite"></div>
+        </div>
+
+        <!-- Sensor calibration (GET/POST /api/v2/calibration). Per-channel offset,
+             hard-bounded ±5 °C by the firmware. -->
+        <div class="set-card">
+          <h3>Sensor calibration</h3>
+          <div class="ctl-group">
+            <div class="ctl-head">
+              <span class="form-label">Chamber offset</span>
+              <span class="ctl-hint" id="c-chamber-read">--</span>
+            </div>
+            <div class="touch-adjust">
+              <button class="btn step-btn" type="button" data-cstep="chamber,-0.5" aria-label="Decrease chamber offset"><svg class="icon"><use href="#i-minus"/></svg></button>
+              <output class="touch-value" id="c-chamber-value">0.0 <span>°C</span></output>
+              <button class="btn step-btn" type="button" data-cstep="chamber,0.5" aria-label="Increase chamber offset"><svg class="icon"><use href="#i-plus"/></svg></button>
+            </div>
+            <input class="form-range" id="c-chamber-range" type="range" min="-5" max="5" step="0.5" value="0" aria-label="Chamber offset">
+          </div>
+          <div class="ctl-group">
+            <div class="ctl-head">
+              <span class="form-label">PTC offset</span>
+              <span class="ctl-hint" id="c-ptc-read">--</span>
+            </div>
+            <div class="touch-adjust">
+              <button class="btn step-btn" type="button" data-cstep="ptc,-0.5" aria-label="Decrease PTC offset"><svg class="icon"><use href="#i-minus"/></svg></button>
+              <output class="touch-value" id="c-ptc-value">0.0 <span>°C</span></output>
+              <button class="btn step-btn" type="button" data-cstep="ptc,0.5" aria-label="Increase PTC offset"><svg class="icon"><use href="#i-plus"/></svg></button>
+            </div>
+            <input class="form-range" id="c-ptc-range" type="range" min="-5" max="5" step="0.5" value="0" aria-label="PTC offset">
+          </div>
+          <p class="set-note">Correct a mis-reading sensor by up to ±5&nbsp;°C. The corrected value drives both the display and every safety cutoff, so the range is deliberately bounded — calibration can never disable a fault.</p>
+          <button class="btn btn-primary btn-block" type="button" id="c-cal-save"><svg class="icon"><use href="#i-thermometer"/></svg> <span>Save calibration</span></button>
+          <div class="mode-feedback" id="c-cal-msg" role="status" aria-live="polite"></div>
+        </div>
+
+        <!-- Status LEDs master enable (POST /settings?leds_enabled=). -->
+        <div class="set-card">
+          <h3>Status LEDs</h3>
+          <div class="set-head-row">
+            <span class="set-note" style="margin:0">Front-panel indicator LEDs</span>
+            <button class="btn" type="button" id="s-leds-toggle" aria-pressed="true"><span>On</span></button>
+          </div>
+          <p class="set-note">Turn the four front-panel LEDs off if the light is distracting. Monitoring and safety are unaffected — only the indicators change.</p>
+          <div class="mode-feedback" id="s-leds-msg" role="status" aria-live="polite"></div>
         </div>
 
         <!-- Network / printer + control token. -->
@@ -721,7 +766,7 @@ svg.icon{ width: 20px; height: 20px; fill: none; stroke: currentColor;
   }
 
   /* ---- Navigation: rail tabs. Home = live Dashboard; manual/auto/dry = U2 control
-     screens; settings = U3/U4 stub. CSS routes the matching page-only section. ---- */
+     screens; settings = U3/U4 screen. CSS routes the matching page-only section. ---- */
   var pageTitles={ home:'Dashboard', manual:'Manual heat', auto:'Automatic mode', dry:'Dry cycle', settings:'Settings' };
   document.querySelectorAll('.tab').forEach(function(tab){
     tab.addEventListener('click', function(){
@@ -729,7 +774,7 @@ svg.icon{ width: 20px; height: 20px; fill: none; stroke: currentColor;
       $('db-title').textContent = pageTitles[page] || 'Dashboard';
       document.querySelector('.main').dataset.page = page;
       document.querySelectorAll('.tab').forEach(function(t){ t.setAttribute('aria-selected', String(t===tab)); });
-      if(page==='settings'){ loadSafety(); loadLogs(); }   /* U3: refresh on open */
+      if(page==='settings'){ loadSafety(); loadCalibration(); loadLogs(); }   /* U3/U4: refresh on open */
     });
   });
 
@@ -905,6 +950,7 @@ svg.icon{ width: 20px; height: 20px; fill: none; stroke: currentColor;
       if(isFinite(s.comms_ms_max)) sset.comms.max = Math.round(s.comms_ms_max/1000);
       if(isFinite(s.max)) setSset('max', s.max);
       if(isFinite(s.comms_ms)) setSset('comms', Math.round(s.comms_ms/1000));
+      if(typeof s.leds_enabled==='boolean') setLedToggle(s.leds_enabled);
     }).catch(function(){});
   }
   document.querySelectorAll('[data-sstep]').forEach(function(b){
@@ -925,6 +971,62 @@ svg.icon{ width: 20px; height: 20px; fill: none; stroke: currentColor;
         flash('s-safety-msg', 'Saved.', 'is-ok');
       })
       .catch(function(j){ flash('s-safety-msg', 'Save failed: '+((j&&(j.message||j.error))||'error'), 'is-error'); });
+  });
+
+  /* ===== U4: Sensor calibration (GET/POST /api/v2/calibration) ================
+     Per-channel offset, hard-bounded ±5 °C by the firmware (clamped on set AND on
+     NVS load). 0.5 °C step; the live reading is shown beside each control. ----- */
+  var CAL_MIN=-5, CAL_MAX=5;
+  var cal = {
+    chamber: { val:0, vId:'c-chamber-value', rId:'c-chamber-range', readId:'c-chamber-read' },
+    ptc:     { val:0, vId:'c-ptc-value',     rId:'c-ptc-range',     readId:'c-ptc-read' }
+  };
+  function clampCal(v){ return Math.max(CAL_MIN, Math.min(CAL_MAX, Math.round(v*2)/2)); }
+  function renderCal(k){
+    var f=cal[k], v=$(f.vId), r=$(f.rId);
+    if(v && v.firstChild) v.firstChild.textContent = f.val.toFixed(1)+' ';
+    if(r) r.value=f.val;
+  }
+  function setCal(k, val){ if(val==null || !isFinite(val)) return; cal[k].val=clampCal(val); renderCal(k); }
+  Object.keys(cal).forEach(renderCal);
+  function showReading(id, v){ u(id, v==null ? 'reading --' : 'now '+Number(v).toFixed(1)+' °C'); }
+  function applyCal(s){
+    if(!s) return;
+    if(isFinite(s.chamber_offset_c)) setCal('chamber', s.chamber_offset_c);
+    if(isFinite(s.ptc_offset_c)) setCal('ptc', s.ptc_offset_c);
+    showReading('c-chamber-read', s.chamber_c==null?null:s.chamber_c);
+    showReading('c-ptc-read', s.ptc_c==null?null:s.ptc_c);
+  }
+  function loadCalibration(){
+    fetch('/api/v2/calibration', {cache:'no-store'}).then(function(r){ return r.json(); }).then(applyCal).catch(function(){});
+  }
+  document.querySelectorAll('[data-cstep]').forEach(function(b){
+    b.addEventListener('click', function(){ var p=b.dataset.cstep.split(','); setCal(p[0], cal[p[0]].val+Number(p[1])); });
+  });
+  [['chamber','c-chamber-range'],['ptc','c-ptc-range']].forEach(function(p){
+    var r=$(p[1]); if(r) r.addEventListener('input', function(){ setCal(p[0], Number(r.value)); });
+  });
+  /* Save both offsets; the device clamps to ±5 °C and echoes the effective values. */
+  $('c-cal-save').addEventListener('click', function(){
+    flash('c-cal-msg', 'Saving…');
+    request('/api/v2/calibration', {chamber_offset_c:cal.chamber.val, ptc_offset_c:cal.ptc.val})
+      .then(function(s){ applyCal(s); flash('c-cal-msg', 'Saved.', 'is-ok'); })
+      .catch(function(j){ flash('c-cal-msg', 'Save failed: '+((j&&(j.message||j.error))||'error'), 'is-error'); });
+  });
+
+  /* ===== U4: Status-LED master enable (part of /settings) ==================== */
+  function setLedToggle(on){
+    var b=$('s-leds-toggle'); if(!b) return;
+    b.setAttribute('aria-pressed', on?'true':'false');
+    b.querySelector('span').textContent = on?'On':'Off';
+  }
+  $('s-leds-toggle').addEventListener('click', function(){
+    var next = $('s-leds-toggle').getAttribute('aria-pressed')!=='true';
+    flash('s-leds-msg', 'Saving…');
+    request('/settings?leds_enabled='+(next?1:0), {})
+      .then(function(s){ setLedToggle(s && typeof s.leds_enabled==='boolean' ? s.leds_enabled : next);
+        flash('s-leds-msg', next?'LEDs on.':'LEDs off.', 'is-ok'); })
+      .catch(function(j){ flash('s-leds-msg', 'Failed: '+((j&&(j.message||j.error))||'error'), 'is-error'); });
   });
 
   /* Control token set/clear -> POST /api/v2/token. On success this browser keeps

@@ -32,6 +32,24 @@ guarantee** — no firmware can promise the absence of every fault.
 - **Boot state** → SSR forced OFF in `pb_heater_init()` before anything else runs;
   a hung control loop trips the task watchdog (`CONFIG_ESP_TASK_WDT_PANIC`).
 
+## Sensor calibration is bounded (cannot defeat a cutoff)
+Each temperature channel (chamber, PTC) has a user-settable calibration
+**offset** so a mis-reading sensor can be corrected. The offset is **hard-clamped
+to ±5 °C** and the clamp is enforced **on every set AND on every NVS load** — a
+corrupt or hand-edited stored value clamps to the bound, it is never applied raw.
+The offset is applied inside `pb_ntc`, so the display, control regulation, AUTO,
+and the over-temp cutoffs all act on the **same** calibrated value.
+
+Because the offset is bounded to ±5 °C, the fixed cutoffs can shift by **at most
+5 °C**: the chamber trips at **≥80 °C** worst case (85 − 5) and the PTC element at
+**≥100 °C** worst case (105 − 5). The cutoff constants themselves
+(`PB_HEATER_CHAMBER_MAX_C` = 85, `PB_HEATER_PTC_CUTOFF_C` = 105) are unchanged and
+not user-configurable, and calibration touches only the reading, never the
+sensor-fault fail-closed logic (which is raw-count based). Calibration therefore
+**cannot disable a fault** or exceed the ±5 °C bound, and the Layer-1 bonded
+thermal cutoff + Layer-2 PTC self-limit remain the true emergency layer regardless
+of any offset.
+
 ## Front-panel panic-off (long-press)
 Holding **any** front-panel button for 2 s latches the heater off and drops the
 mode to OFF. It is called **panic-off**, deliberately, and is **not** a

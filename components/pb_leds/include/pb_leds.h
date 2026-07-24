@@ -47,3 +47,17 @@ void pb_leds_set_code(pb_led_id_t id, uint8_t pulses);
 
 // Current logical pattern, including when dev-board HIL compiles GPIO out.
 pb_led_pattern_t pb_leds_get(pb_led_id_t id);
+
+// --- Status-LED master enable (NVS-backed, namespace app_nvs, default ON) -----
+// When disabled the driver task leaves every panel LED physically off; pb_policy
+// still computes patterns (pb_leds just no-ops the GPIO output). The pattern
+// state is unaffected, so re-enabling resumes the current indication instantly.
+//
+// Load the persisted flag from NVS. MUST be called AFTER nvs_init(); before it,
+// the flag defaults to ON (enabled). Value is coerced to a strict bool on load.
+void pb_leds_load_config(void);
+// Enable/disable the physical LED output; persists the flag to NVS. When
+// disabling, the driver task drops the LEDs off within one 50 ms tick.
+esp_err_t pb_leds_set_enabled(bool enabled);
+// Current master-enable flag (true = LEDs are driven).
+bool pb_leds_get_enabled(void);

@@ -8,8 +8,17 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_log.h"
+#include "nvs.h"
 
 static const char *TAG = "pb_leds";
+
+// Persisted master-enable flag (shared app_nvs namespace). Default ON.
+#define NVS_NS            "app_nvs"
+#define KEY_LEDS_ENABLED  "leds_enabled"   // u32: 0 = off, nonzero = on
+
+// Read from the driver task every tick and set by the HTTP task; atomic so the
+// output can be gated without a lock. Defaults ON until pb_leds_load_config().
+static _Atomic bool s_enabled = true;
 
 // 50 ms base tick. Blink half-periods and the CODE timing are all counted in ticks.
 #define TICK_MS           50
@@ -87,6 +96,10 @@ static void led_task(void *arg)
                 cs[i].sub = 0;
                 break;
             }
+            // Master-enable gate: patterns above keep sequencing (so pb_policy's
+            // indication is preserved), but when disabled the physical output is
+            // forced off — the LEDs simply are not driven.
+            if (!atomic_load(&s_enabled)) on = 0;
 #ifndef CONFIG_PB_HIL_DEVBOARD
             gpio_set_level(s_gpio[i], on ? 1 : 0);
 #else
@@ -154,3 +167,31 @@ pb_led_pattern_t pb_leds_get(pb_led_id_t id)
     if (id < 0 || id >= PB_LED_COUNT) return PB_LED_OFF;
     return atomic_load(&s_pat[id]);
 }
+
+void pb_leds_load_config(void)
+{
+    bool enabled = true;                 // default ON if unset / NVS unavailable
+    nvs_handle_t h;
+    if (nvs_open(NVS_NS, NVS_READONLY, &h) == ESP_OK) {
+        uint32_t v;
+        if (nvs_get_u32(h, KEY_LEDS_ENABLED, &v) == ESP_OK) enabled = (v != 0);
+        nvs_close(h);
+    }
+    atomic_store(&s_enabled, enabled);
+    ESP_LOGI(TAG, "status LEDs %s", enabled ? "enabled" : "disabled");
+}
+
+esp_err_t pb_leds_set_enabled(bool enabled)
+{
+    atomic_store(&s_enabled, enabled);   // driver task honors it on the next tick
+    nvs_handle_t h;
+    if (nvs_open(NVS_NS, NVS_READWRITE, &h) == ESP_OK) {
+        nvs_set_u32(h, KEY_LEDS_ENABLED, enabled ? 1u : 0u);
+        nvs_commit(h);
+        nvs_close(h);
+    }
+    ESP_LOGI(TAG, "status LEDs %s", enabled ? "enabled" : "disabled");
+    return ESP_OK;
+}
+
+bool pb_leds_get_enabled(void) { return atomic_load(&s_enabled); }

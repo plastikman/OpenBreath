@@ -2,6 +2,7 @@
 #include "pb_httpd.h"
 #include "pb_heater.h"
 #include "pb_ntc.h"
+#include "pb_leds.h"
 #include "pb_policy.h"
 #include "pv_evlog.h"
 
@@ -600,16 +601,18 @@ static esp_err_t events_get(httpd_req_t *req)
 // the response to a successful POST /settings).
 static esp_err_t settings_send(httpd_req_t *req)
 {
-    char buf[224];
+    char buf[288];
     int n = snprintf(buf, sizeof buf,
         "{\"max\":%.1f,\"max_min\":%.1f,\"max_abs\":%.1f,"
-        "\"comms_ms\":%u,\"comms_ms_min\":%u,\"comms_ms_max\":%u}",
+        "\"comms_ms\":%u,\"comms_ms_min\":%u,\"comms_ms_max\":%u,"
+        "\"leds_enabled\":%s}",
         (double)pb_heater_get_max_target_c(),
         (double)PB_HEATER_MIN_TARGET_C,
         (double)PB_HEATER_ABS_MAX_TARGET_C,
         (unsigned)pb_heater_get_comms_timeout_ms(),
         (unsigned)PB_HEATER_COMMS_TIMEOUT_MS_MIN,
-        (unsigned)PB_HEATER_COMMS_TIMEOUT_MS_MAX);
+        (unsigned)PB_HEATER_COMMS_TIMEOUT_MS_MAX,
+        pb_leds_get_enabled() ? "true" : "false");
     httpd_resp_set_type(req, "application/json");
     return httpd_resp_send(req, buf, n);
 }
@@ -648,15 +651,16 @@ static bool parse_u32(const char *s, uint32_t *out)
     return true;
 }
 
-// POST /settings?max=<C>&comms_ms=<ms> — update either/both. Auth-gated. Each field
-// is optional; values are clamped to the safe envelope by pb_heater's setters (the
-// ceiling can never exceed 70 C; the comms deadman stays within [10s, 5min]). At
-// least one recognized field must be present.
+// POST /settings?max=<C>&comms_ms=<ms>&leds_enabled=<0|1> — update any subset.
+// Auth-gated. Each field is optional; the safety values are clamped to the safe
+// envelope by pb_heater's setters (the ceiling can never exceed 70 C; the comms
+// deadman stays within [10s, 5min]). leds_enabled toggles the status-LED master
+// enable. At least one recognized field must be present.
 static esp_err_t settings_post(httpd_req_t *req)
 {
     if (auth_reject(req)) return ESP_OK;
 
-    char q[96];
+    char q[128];
     if (httpd_req_get_url_query_str(req, q, sizeof q) != ESP_OK) {
         // Fall back to a query-style body ("max=60&comms_ms=30000").
         int r = httpd_req_recv(req, q, sizeof q - 1);
@@ -678,11 +682,77 @@ static esp_err_t settings_post(httpd_req_t *req)
         pb_heater_set_comms_timeout_ms(ms);   // clamps + persists
         applied = true;
     }
+    if (httpd_query_key_value(q, "leds_enabled", v, sizeof v) == ESP_OK) {
+        uint32_t on;
+        if (!parse_u32(v, &on)) { httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "bad leds_enabled"); return ESP_FAIL; }
+        pb_leds_set_enabled(on != 0);   // persists
+        applied = true;
+    }
     if (!applied) {
-        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "no known settings (max, comms_ms)");
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "no known settings (max, comms_ms, leds_enabled)");
         return ESP_FAIL;
     }
     return settings_send(req);   // echo the clamped result
+}
+
+// --- Sensor calibration (GET/POST /api/v2/calibration) ----------------------
+// Per-channel temperature offset, hard-bounded to ±PB_NTC_OFFSET_MAX_C (±5 °C) in
+// pb_ntc (on every set AND on NVS load). GET is read-only/open; POST is auth-gated.
+static esp_err_t calibration_send(httpd_req_t *req)
+{
+    float ch_off  = pb_ntc_get_offset_c(PB_NTC_CHAMBER);
+    float ptc_off = pb_ntc_get_offset_c(PB_NTC_PTC);
+    // Live calibrated readings (NAN unless the last read was OK); the raw reading
+    // is the calibrated value minus the applied offset, for the UI to show both.
+    float ch_cal  = pb_ntc_last_status(PB_NTC_CHAMBER) == PB_NTC_OK
+                    ? pb_ntc_smoothed_c(PB_NTC_CHAMBER) : NAN;
+    float ptc_cal = pb_ntc_last_status(PB_NTC_PTC) == PB_NTC_OK
+                    ? pb_ntc_smoothed_c(PB_NTC_PTC) : NAN;
+
+    cJSON *o = cJSON_CreateObject();
+    if (!o) { httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "oom"); return ESP_FAIL; }
+    cJSON_AddNumberToObject(o, "api_version", API_VERSION);
+    add_num1(o, "chamber_offset_c", ch_off);
+    add_num1(o, "ptc_offset_c", ptc_off);
+    cJSON_AddNumberToObject(o, "min", -PB_NTC_OFFSET_MAX_C);
+    cJSON_AddNumberToObject(o, "max",  PB_NTC_OFFSET_MAX_C);
+    add_num1(o, "chamber_c", ch_cal);
+    add_num1(o, "ptc_c", ptc_cal);
+    add_num1(o, "chamber_raw_c", isfinite(ch_cal)  ? ch_cal  - ch_off  : NAN);
+    add_num1(o, "ptc_raw_c",     isfinite(ptc_cal) ? ptc_cal - ptc_off : NAN);
+    return send_json(req, o);
+}
+
+static esp_err_t calibration_get(httpd_req_t *req)
+{
+    return calibration_send(req);
+}
+
+// POST /api/v2/calibration — body {"chamber_offset_c":x,"ptc_offset_c":y} (either
+// optional). Auth-gated. Each supplied offset is clamped to ±5 °C and persisted by
+// pb_ntc; the clamped effective offsets are echoed back. At least one field required.
+static esp_err_t calibration_post(httpd_req_t *req)
+{
+    if (auth_reject(req)) return ESP_OK;
+    cJSON *root = recv_json(req);
+    if (!root)
+        return api_error(req, "400 Bad Request", "invalid_command", "invalid JSON body", NULL);
+
+    bool applied = false;
+    double v;
+    if (json_number(root, "chamber_offset_c", &v)) {
+        pb_ntc_set_offset_c(PB_NTC_CHAMBER, (float)v);   // clamps + persists
+        applied = true;
+    }
+    if (json_number(root, "ptc_offset_c", &v)) {
+        pb_ntc_set_offset_c(PB_NTC_PTC, (float)v);       // clamps + persists
+        applied = true;
+    }
+    cJSON_Delete(root);
+    if (!applied)
+        return api_error(req, "400 Bad Request", "invalid_command",
+                         "chamber_offset_c and/or ptc_offset_c required", NULL);
+    return calibration_send(req);   // echo the clamped offsets
 }
 
 // POST /update — stream a new DragonBreath .bin into the inactive OTA slot, verify,
@@ -690,6 +760,8 @@ static esp_err_t settings_post(httpd_req_t *req)
 // armed/on — a reboot mid-heat leaves the SSR state undefined until re-init, so
 // the operator must turn the heater off first. Rollback (PENDING_VERIFY) means a
 // bad image that crashes before app_main marks itself healthy reverts on reboot.
+static bool device_armed(void);   // defined below; shared armed-mode guard
+
 static esp_err_t ota_fail(httpd_req_t *req, const char *status, esp_ota_handle_t h, const char *msg)
 {
     if (h) esp_ota_abort(h);
@@ -711,10 +783,10 @@ static esp_err_t update_post(httpd_req_t *req)
 {
     if (auth_reject(req)) return ESP_OK;
 
-    // Block while heating (chosen safety policy).
-    pb_policy_snapshot_t snap;
-    pb_policy_get_snapshot(&snap);
-    if (snap.heater_output || snap.effective_target_c > 0.0f)
+    // Block for ANY armed mode (chosen safety policy). Uses the same armed-mode
+    // condition as restart/factory-reset so an armed AUTO waiting below the bed
+    // threshold (target held at 0) is refused too, not just active output.
+    if (device_armed())
         return ota_fail(req, "409 Conflict", 0, "turn the heater off before updating");
 
     const esp_partition_t *part = esp_ota_get_next_update_partition(NULL);
@@ -786,17 +858,24 @@ static esp_err_t update_post(httpd_req_t *req)
     return ESP_OK;
 }
 
-// True (and already responded with 409) when a mutating maintenance action must
-// be refused because the heater is armed/on — mirrors the /update guard so a
-// reboot/erase can never happen mid-heat with the SSR in an undefined state.
-static bool refuse_while_heating(httpd_req_t *req, const char *message)
+// True whenever the device is in ANY armed mode (or the SSR is on). Armed AUTO
+// deliberately holds effective_target_c at 0 while waiting below the bed
+// threshold, so "armed" is inferred from the mode (the documented contract), not
+// from output/target. Shared by every maintenance action that must be refused
+// mid-heat (restart / factory-reset / OTA), so a reboot/erase/flash can never
+// happen with the SSR in an undefined state.
+static bool device_armed(void)
 {
     pb_policy_snapshot_t snap;
     pb_policy_get_snapshot(&snap);
-    // Refuse for ANY armed mode, not just active output: armed AUTO deliberately
-    // holds effective_target_c at 0 while waiting below the bed threshold, so infer
-    // "armed" from the mode (the documented contract), not from output/target.
-    if (snap.mode != PB_MODE_OFF || snap.heater_output) {
+    return snap.mode != PB_MODE_OFF || snap.heater_output;
+}
+
+// True (and already responded with 409) when a mutating maintenance action must
+// be refused because the device is armed/on.
+static bool refuse_while_heating(httpd_req_t *req, const char *message)
+{
+    if (device_armed()) {
         api_error(req, "409 Conflict", "heater_active", message, NULL);
         return true;
     }
@@ -945,7 +1024,7 @@ esp_err_t pb_httpd_start(void)
     httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
     cfg.lru_purge_enable = true;
     cfg.uri_match_fn = httpd_uri_match_wildcard;   // lets pb_portal add a "/*" captive catch-all
-    cfg.max_uri_handlers = 20;                     // 19 used + 1 spare
+    cfg.max_uri_handlers = 22;                     // 21 used + 1 spare
     // The OTA handler hashes the image (mbedtls) with a 1 KB read buffer + the
     // app descriptor on-stack, which overflows the 4 KB default httpd task stack
     // (stack-protection panic). Give it headroom.
@@ -974,6 +1053,8 @@ esp_err_t pb_httpd_start(void)
     httpd_uri_t rst    = { .uri = "/api/v2/restart",   .method = HTTP_POST, .handler = restart_post };
     httpd_uri_t frst   = { .uri = "/api/v2/factory-reset", .method = HTTP_POST, .handler = factory_reset_post };
     httpd_uri_t tok    = { .uri = "/api/v2/token",     .method = HTTP_POST, .handler = token_post };
+    httpd_uri_t calg   = { .uri = "/api/v2/calibration", .method = HTTP_GET,  .handler = calibration_get };
+    httpd_uri_t calp   = { .uri = "/api/v2/calibration", .method = HTTP_POST, .handler = calibration_post };
     httpd_register_uri_handler(s_server, &info);
     httpd_register_uri_handler(s_server, &state);
     httpd_register_uri_handler(s_server, &cmd);
@@ -987,7 +1068,9 @@ esp_err_t pb_httpd_start(void)
     httpd_register_uri_handler(s_server, &rst);
     httpd_register_uri_handler(s_server, &frst);
     httpd_register_uri_handler(s_server, &tok);
-    ESP_LOGI(TAG, "HTTP API v2 up :80 (info/state/events/health/logs; command/heartbeat/restart/factory-reset/token; settings; OTA /update)");
+    httpd_register_uri_handler(s_server, &calg);
+    httpd_register_uri_handler(s_server, &calp);
+    ESP_LOGI(TAG, "HTTP API v2 up :80 (info/state/events/health/logs; command/heartbeat/restart/factory-reset/token/calibration; settings; OTA /update)");
     return ESP_OK;
 }
 

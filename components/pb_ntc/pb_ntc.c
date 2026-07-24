@@ -5,7 +5,9 @@
 
 #include <math.h>
 #include <string.h>
+#include <stdatomic.h>
 #include "esp_log.h"
+#include "nvs.h"
 #ifdef CONFIG_PB_HIL_DEVBOARD
 #include "freertos/FreeRTOS.h"
 #else
@@ -15,6 +17,69 @@
 #endif
 
 static const char *TAG = "pb_ntc";
+
+// --- Per-channel calibration offset (shared by both backends) ----------------
+// Stored as centi-°C, hard-clamped to ±(PB_NTC_OFFSET_MAX_C*100). Written by the
+// HTTP task and read by the control task on every sample, so it is atomic. The
+// offset is added to every OK reading BEFORE it feeds the moving-average filter,
+// so pb_ntc_read() (instantaneous, used by the cutoffs) and pb_ntc_smoothed_c()
+// (display/control) both return the one calibrated value. Raw-count fault
+// thresholds are unaffected — calibration cannot touch the fail-closed logic.
+#define PB_NTC_NVS_NS       "app_nvs"
+#define PB_NTC_KEY_OFF_CH   "ntc_off_ch"    // i32 centi-°C, chamber
+#define PB_NTC_KEY_OFF_PTC  "ntc_off_ptc"   // i32 centi-°C, PTC
+#define PB_NTC_OFFSET_CENTI_MAX  ((int)(PB_NTC_OFFSET_MAX_C * 100.0f))
+
+static _Atomic int s_offset_centi[2];       // [PB_NTC_CHAMBER], [PB_NTC_PTC]
+
+static float ntc_offset_c(pb_ntc_channel_t ch)
+{
+    if (ch < PB_NTC_CHAMBER || ch > PB_NTC_PTC) return 0.0f;
+    return (float)atomic_load(&s_offset_centi[ch]) / 100.0f;
+}
+
+void pb_ntc_load_calibration(void)
+{
+    int32_t ch_centi = 0, ptc_centi = 0;
+    nvs_handle_t h;
+    if (nvs_open(PB_NTC_NVS_NS, NVS_READONLY, &h) == ESP_OK) {
+        int32_t v;
+        if (nvs_get_i32(h, PB_NTC_KEY_OFF_CH,  &v) == ESP_OK) ch_centi  = v;
+        if (nvs_get_i32(h, PB_NTC_KEY_OFF_PTC, &v) == ESP_OK) ptc_centi = v;
+        nvs_close(h);
+    }
+    // Clamp on load: a corrupt / out-of-range stored value must clamp, never be
+    // applied raw. Bound is identical to the setter's ±5 °C.
+    if (ch_centi  < -PB_NTC_OFFSET_CENTI_MAX) ch_centi  = -PB_NTC_OFFSET_CENTI_MAX;
+    if (ch_centi  >  PB_NTC_OFFSET_CENTI_MAX) ch_centi  =  PB_NTC_OFFSET_CENTI_MAX;
+    if (ptc_centi < -PB_NTC_OFFSET_CENTI_MAX) ptc_centi = -PB_NTC_OFFSET_CENTI_MAX;
+    if (ptc_centi >  PB_NTC_OFFSET_CENTI_MAX) ptc_centi =  PB_NTC_OFFSET_CENTI_MAX;
+    atomic_store(&s_offset_centi[PB_NTC_CHAMBER], (int)ch_centi);
+    atomic_store(&s_offset_centi[PB_NTC_PTC],     (int)ptc_centi);
+    ESP_LOGI(TAG, "calibration loaded: chamber=%+.2fC ptc=%+.2fC",
+             ch_centi / 100.0, ptc_centi / 100.0);
+}
+
+esp_err_t pb_ntc_set_offset_c(pb_ntc_channel_t ch, float offset_c)
+{
+    if (ch < PB_NTC_CHAMBER || ch > PB_NTC_PTC) return ESP_ERR_INVALID_ARG;
+    float clamped = pb_ntc_clamp_offset_c(offset_c);          // ±5 °C hard bound
+    int centi = (int)lroundf(clamped * 100.0f);
+    if (centi < -PB_NTC_OFFSET_CENTI_MAX) centi = -PB_NTC_OFFSET_CENTI_MAX;
+    if (centi >  PB_NTC_OFFSET_CENTI_MAX) centi =  PB_NTC_OFFSET_CENTI_MAX;
+    atomic_store(&s_offset_centi[ch], centi);
+    nvs_handle_t h;
+    if (nvs_open(PB_NTC_NVS_NS, NVS_READWRITE, &h) == ESP_OK) {
+        nvs_set_i32(h, ch == PB_NTC_CHAMBER ? PB_NTC_KEY_OFF_CH
+                                            : PB_NTC_KEY_OFF_PTC, centi);
+        nvs_commit(h);
+        nvs_close(h);
+    }
+    ESP_LOGI(TAG, "calibration offset ch%d set to %+.2f C", (int)ch, (double)clamped);
+    return ESP_OK;
+}
+
+float pb_ntc_get_offset_c(pb_ntc_channel_t ch) { return ntc_offset_c(ch); }
 
 #ifdef CONFIG_PB_HIL_DEVBOARD
 
@@ -64,6 +129,7 @@ pb_ntc_status_t pb_ntc_read(pb_ntc_channel_t ch, float *out_c)
     float temp_c = status == PB_NTC_OK ? s_hil_temp[ch] : NAN;
     s_last_status[ch] = status;
     taskEXIT_CRITICAL(&s_hil_mux);
+    if (status == PB_NTC_OK) temp_c += ntc_offset_c(ch);   // apply calibration
     if (out_c) *out_c = temp_c;
     return status;
 }
@@ -83,6 +149,7 @@ float pb_ntc_smoothed_c(pb_ntc_channel_t ch)
     taskENTER_CRITICAL(&s_hil_mux);
     float temp_c = s_hil_status[ch] == PB_NTC_OK ? s_hil_temp[ch] : NAN;
     taskEXIT_CRITICAL(&s_hil_mux);
+    if (isfinite(temp_c)) temp_c += ntc_offset_c(ch);   // apply calibration
     return temp_c;
 }
 
@@ -220,6 +287,7 @@ pb_ntc_status_t pb_ntc_read(pb_ntc_channel_t ch, float *out_c)
         if (v <= 0.0f || v >= PB_VSUPPLY_V) { st = PB_NTC_OPEN; break; }
         float r_kohm = (float)s_rref_kohm * v / (PB_VSUPPLY_V - v);
         t = rntc_to_temp_c(r_kohm);
+        t += ntc_offset_c(ch);                        // apply calibration offset
         push_average(ch, t);                          // feed the display filter
         st = PB_NTC_OK;
     } while (0);
