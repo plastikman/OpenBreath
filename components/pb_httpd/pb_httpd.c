@@ -340,12 +340,20 @@ static esp_err_t policy_error(
     pb_policy_result_t result,
     const char *request_id)
 {
-    const char *status = result == PB_POLICY_INVALID
-        ? "400 Bad Request" : "409 Conflict";
+    const char *status, *message;
+    if (result == PB_POLICY_INVALID) {
+        status = "400 Bad Request";
+        message = "command rejected by authoritative policy";
+    } else if (result == PB_POLICY_PERSIST_FAILED) {
+        status = "500 Internal Server Error";
+        message = "fault cleared in RAM but persisting it failed; the latch remains";
+    } else {
+        status = "409 Conflict";
+        message = "command rejected by authoritative policy";
+    }
     const char *code = result == PB_POLICY_INVALID
         ? "invalid_command" : pb_policy_result_str(result);
-    return api_error(req, status, code,
-                     "command rejected by authoritative policy", request_id);
+    return api_error(req, status, code, message, request_id);
 }
 
 static esp_err_t command_post(httpd_req_t *req)
