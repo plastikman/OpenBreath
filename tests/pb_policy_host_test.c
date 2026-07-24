@@ -22,6 +22,9 @@ static uint32_t heater_comms_timeout_ms;
 // When set, the "sensor condition" is still unsafe, so the next tick re-latches
 // after any clear -- mirroring pb_heater_tick()'s real re-evaluation.
 static bool heater_relatch;
+// When set, clearing the fault "fails to persist" (NVS write error), so the real
+// heater keeps the latch and pb_heater_clear_fault() returns non-OK.
+static bool heater_clear_persist_fails;
 static uint8_t fan_level;
 static pb_led_pattern_t led_pattern[PB_LED_COUNT];
 static float chamber_c = 25.0f;
@@ -87,12 +90,14 @@ void pb_heater_request_panic_off(const char *reason)
     heater_reason = reason;
 }
 
-void pb_heater_clear_fault(void)
+esp_err_t pb_heater_clear_fault(void)
 {
-    if (heater_inhibited) return;
+    if (heater_inhibited) return ESP_ERR_INVALID_STATE;
+    if (heater_clear_persist_fails) return ESP_FAIL;   // persist-first failure: stays latched
     heater_fault = false;
     heater_target = 0.0f;
     heater_reason = NULL;
+    return ESP_OK;
 }
 
 bool pb_heater_is_inhibited(void) { return heater_inhibited; }
@@ -866,6 +871,59 @@ static void test_button_power_long_clears_or_holds_fault(void)
     CHECK(snapshot().mode == PB_MODE_OFF);
 }
 
+// B2: clearing a fault whose NVS persist fails must leave the heater LATCHED and
+// report PERSIST_FAILED (never falsely appear cleared, since it would return on reboot).
+static void test_fault_clear_persist_failure_stays_latched(void)
+{
+    reset_fixture();
+    heater_fault = true;
+    heater_reason = "test fault";
+    heater_clear_persist_fails = true;
+    pb_policy_snapshot_t snap = snapshot();
+    CHECK(pb_policy_clear_fault(PB_SOURCE_WEB, snap.state_revision) == PB_POLICY_PERSIST_FAILED);
+    CHECK(heater_fault);                         // stays latched (fail-safe)
+    heater_clear_persist_fails = false;          // persistence recovers
+    snap = snapshot();
+    CHECK(pb_policy_clear_fault(PB_SOURCE_WEB, snap.state_revision) == PB_POLICY_OK);
+    CHECK(!heater_fault);
+}
+
+// B2: the residual-heat purge is session-gated (never temperature-only, so a
+// reboot-while-hot does NOT spin the fan) with 40 C-latch / 37 C-release hysteresis
+// over BOTH the chamber and PTC sensors.
+static void test_purge_decide_session_and_hysteresis(void)
+{
+    bool heated = false;
+    // Never heated this session -> no purge even when hot. This is EXACTLY the
+    // reboot-while-hot case (the heated flag is RAM-only and starts false).
+    CHECK(pb_purge_decide(false, &heated, true, 60.0f, true, 60.0f, false) == false);
+    CHECK(heated == false);
+
+    // Actively heating marks the session; the fan is heat control's job, not purge.
+    CHECK(pb_purge_decide(true, &heated, true, 55.0f, true, 55.0f, false) == false);
+    CHECK(heated == true);
+
+    // Heat stops while hot (chamber >= 40) -> purge starts.
+    CHECK(pb_purge_decide(false, &heated, true, 50.0f, true, 30.0f, false) == true);
+    // Hysteresis: drifts into the 37-40 band while purging -> stays on.
+    CHECK(pb_purge_decide(false, &heated, true, 38.0f, true, 30.0f, true) == true);
+    // Releases only once BOTH sensors are below 37.
+    CHECK(pb_purge_decide(false, &heated, true, 36.9f, true, 36.0f, true) == false);
+    CHECK(heated == false);                      // fully cooled -> session ends
+
+    // Stopping in the band (38 C, below the 40 latch) does NOT start a purge.
+    heated = true;
+    CHECK(pb_purge_decide(false, &heated, true, 38.0f, true, 30.0f, false) == false);
+
+    // PTC alone hot (chamber cool) still triggers the purge.
+    heated = true;
+    CHECK(pb_purge_decide(false, &heated, true, 25.0f, true, 45.0f, false) == true);
+
+    // A faulted/unknown sensor while purging keeps the fan on (can't confirm cool).
+    heated = true;
+    CHECK(pb_purge_decide(false, &heated, false, 0.0f, true, 30.0f, true) == true);
+}
+
 int main(void)
 {
     test_boot_is_off();
@@ -893,6 +951,8 @@ int main(void)
     test_button_rejection_is_logged_without_wake();
     test_button_long_press_panic_off();
     test_button_power_long_clears_or_holds_fault();
+    test_fault_clear_persist_failure_stays_latched();
+    test_purge_decide_session_and_hysteresis();
     puts("pb_policy host tests: PASS");
     return 0;
 }

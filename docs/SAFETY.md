@@ -56,8 +56,10 @@ mode to OFF. It is called **panic-off**, deliberately, and is **not** a
 safety-rated emergency stop — it is software running on the same MCU as the rest
 of the control loop, so a firmware fault could defeat it. The Layer-1 bonded
 cutoff and Layer-2 PTC physics remain the actual emergency layer.
-The panic-off latch is RAM-only and clears on reboot; reboot still starts with
-the SSR, mode, and target OFF, and never restores an active heat command.
+The panic-off latch is RAM-only and clears on reboot (it is a manual stop, not a
+hazard trip); reboot still starts with the SSR, mode, and target OFF, and never
+restores an active heat command. Hazard-driven trips, by contrast, **persist** —
+see below.
 
 How it stays inside the safety model:
 - The button task never writes the SSR GPIO. `pb_policy_request_panic_off()`
@@ -79,6 +81,36 @@ A **long-press on Power while a fault is latched** attempts a fault clear instea
 of a redundant panic. The clear only succeeds if the underlying condition has
 recovered — the next control tick re-evaluates safety and re-latches if the trip
 still holds, so an accidental press cannot revive an unsafe device.
+
+## Persistent fault latch (survives a power cycle)
+A **hazard-driven** safety trip — PTC/chamber over-temp, a sensor fault while
+heating, or the comms-loss watchdog — is written to NVS on the latching
+transition and **restored at boot**. A device that tripped and then lost power
+comes back up **heater-OFF with heat/mode commands inhibited**, rather than
+silently ready to heat, and stays that way until an **explicit** clear after the
+condition has recovered (the next tick re-latches if it hasn't). The persisted
+cause is a small, range-checked numeric code; a live reason string carries
+session detail but is not persisted.
+
+Boot restore is **fail-safe**: if the persisted state cannot be read reliably it
+comes up latched (`persisted fault state unreadable`). A fresh device (no NVS
+namespace yet) is not a fault. Clearing is **persist-first** — the NVS latch is
+cleared *before* the RAM latch, so a failed persist keeps the heater latched and
+the API returns HTTP 500 rather than falsely reporting the fault gone.
+
+This is deliberately separate from heat resume: the persisted latch is the **only**
+fault state that survives a reboot. The active mode, target, deadline, and lease
+are never persisted — the device always boots OFF. The permanent inhibit
+(`pb_heater_inhibit`) is likewise **not** persisted, so a power cycle lifts it (a
+transient init failure must not brick the device across reboots).
+
+## Residual-heat purge (session-gated, hysteresis)
+After heat has run **this session**, the cooldown fan keeps running while the
+chamber **or** PTC sensor is hot, engaging at ≥ 40 °C and releasing only once
+**both** are below 37 °C (an unknown/faulted sensor keeps the fan on). It is
+strictly session-gated: the fan **never** starts on temperature alone, and
+because that gate is RAM-only, a **power-cycle-while-hot does not spin the fan**.
+A fault forces airflow ON unconditionally, independent of this purge.
 
 ## What is NOT protected
 - **Over-current** is only the 6.3 A mains fuse. There is no PCB over-temp cutoff.

@@ -45,6 +45,7 @@ typedef enum {
     PB_POLICY_FAULT_LATCHED,
     PB_POLICY_INHIBITED,
     PB_POLICY_STALE_LEASE,
+    PB_POLICY_PERSIST_FAILED,   // action succeeded in RAM path but NVS persist failed -> HTTP 500
 } pb_policy_result_t;
 
 typedef struct {
@@ -165,6 +166,15 @@ pb_policy_result_t pb_policy_clear_fault(
 // applies the heater/fan outputs, enforces deadlines, and synchronizes safety
 // trips back into the authoritative state.
 void pb_policy_tick(void);
+
+// Pure, session-gated residual-heat purge decision (exposed for host testing).
+// Returns whether the cooldown fan should run and updates *heated_this_session.
+// It purges only after heat ran this session (never on temperature alone), with
+// hysteresis: latch at >= PB_PURGE_LATCH_C on either sensor, release only once
+// BOTH are known below PB_PURGE_RELEASE_C.
+bool pb_purge_decide(bool heat, bool *heated_this_session,
+                     bool chamber_ok, float chamber_c,
+                     bool ptc_ok, float ptc_c, bool prev_cooldown);
 
 // Front-panel button handler.  Short presses toggle the button's labeled mode
 // (re-arming from the remembered parameters); a 2 s long press latches a

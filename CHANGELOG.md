@@ -7,6 +7,30 @@ below into the GitHub Release notes.
 
 ## [Unreleased]
 
+### Added
+- **Persistent safety-fault latch (B2).** A hazard-driven safety trip (PTC/chamber
+  over-temp, sensor fault while heating, comms-loss watchdog) now survives a power
+  cycle: it is written to NVS on the latching transition and restored at boot, so a
+  device that tripped before losing power comes back up **heater-OFF with commands
+  inhibited** instead of silently ready to heat. NVS is loaded **before** the
+  control task starts, and a failed persist is **retried** (a pending flag keeps
+  trying until the commit lands) so an early or transiently-failed write can't lose
+  the latch across a reboot. The persisted cause is a stable numeric code (a live
+  reason string still carries session detail). Boot restore is **fail-safe** — if
+  the stored state cannot be read reliably the device comes up latched. Clearing a
+  fault is **persist-first**: if the NVS clear fails the latch is kept and the API
+  returns HTTP 500 (`persist_failed`) rather than falsely reporting it cleared.
+  User panic-off and the permanent inhibit are not persisted (documented
+  reboot-clears behavior); active mode/target/deadline/lease still never persist.
+
+### Changed
+- **Residual-heat purge hardened.** The post-heat cooldown fan now uses hysteresis
+  (engage at ≥ 40 °C, release only once **both** the chamber and PTC sensors are
+  below 37 °C) instead of a single chamber-only threshold, and it also runs when a
+  sensor reading is **unknown** right as heating ends (can't confirm cool → fail
+  safe). It remains strictly session-gated: the fan never starts on temperature
+  alone, and a power-cycle-while-hot does **not** spin it.
+
 ## [0.5.2] - 2026-07-24
 
 ### Fixed

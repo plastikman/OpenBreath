@@ -22,7 +22,13 @@
 
 static const char *TAG = "pb_policy";
 
-#define PB_COOLDOWN_TEMP_C          40.0f
+// Session-gated residual-heat purge: after heat ran this boot, keep the fan on
+// while the chamber OR PTC is hot, with hysteresis (latch at >=40 C, release only
+// once BOTH are < 37 C). Session-gated (heated_this_session) so the fan NEVER
+// auto-starts on temperature alone — and because that flag is RAM-only, a
+// power-cycle-while-hot does NOT spin the fan.
+#define PB_PURGE_LATCH_C            40.0f
+#define PB_PURGE_RELEASE_C         37.0f
 #define PB_AUTO_BED_HYSTERESIS_C     3.0f
 #define PB_DRYING_MAX_HOURS         12U
 #define PB_MIN_MODE_TARGET_C        30.0f
@@ -66,6 +72,7 @@ typedef struct {
     int64_t lease_deadline_us;
 
     bool heated_this_session;
+    bool last_cooldown;          // hysteresis memory for the residual-heat purge
     bool last_faulted;
 
     pb_policy_params_t params;   // remembered mode parameters
@@ -567,7 +574,12 @@ pb_policy_result_t pb_policy_clear_fault(
         xSemaphoreGive(s_lock);
         return PB_POLICY_INHIBITED;
     }
-    pb_heater_clear_fault();
+    // Persist-first clear: if the NVS clear fails the heater stays latched, so
+    // surface it (HTTP 500) instead of reporting the fault gone.
+    if (pb_heater_clear_fault() != ESP_OK) {
+        xSemaphoreGive(s_lock);
+        return PB_POLICY_PERSIST_FAILED;
+    }
     s.last_faulted = false;
     set_off_locked(source);
     xSemaphoreGive(s_lock);
@@ -713,6 +725,26 @@ void pb_policy_on_button(pb_button_id_t id, pb_button_event_t ev)
     }
 }
 
+bool pb_purge_decide(bool heat, bool *heated_this_session,
+                     bool chamber_ok, float chamber_c,
+                     bool ptc_ok, float ptc_c, bool prev_cooldown)
+{
+    if (heat) { *heated_this_session = true; return false; }  // heating: fan is heat's job
+    if (!*heated_this_session) return false;                  // never heated -> no temp-only purge
+
+    bool hot = (chamber_ok && chamber_c >= PB_PURGE_LATCH_C) ||
+               (ptc_ok     && ptc_c     >= PB_PURGE_LATCH_C);
+    // Release only once BOTH sensors are KNOWN below the release temp; an unknown
+    // (faulted) or still-hot sensor keeps the fan running (fail-safe).
+    bool both_cool = (chamber_ok && chamber_c < PB_PURGE_RELEASE_C) &&
+                     (ptc_ok     && ptc_c     < PB_PURGE_RELEASE_C);
+
+    bool cooldown = prev_cooldown ? !both_cool   // purging: keep on until both cool
+                                  : hot;          // idle: start only at/above the latch
+    if (!cooldown) *heated_this_session = false;  // fully cooled -> end the session purge
+    return cooldown;
+}
+
 void pb_policy_tick(void)
 {
     if (!s_lock) return;
@@ -806,17 +838,13 @@ void pb_policy_tick(void)
     float chamber_c = pb_ntc_smoothed_c(PB_NTC_CHAMBER);
     bool chamber_ok = pb_ntc_last_status(PB_NTC_CHAMBER) == PB_NTC_OK
                       && isfinite(chamber_c);
+    float ptc_c = pb_ntc_smoothed_c(PB_NTC_PTC);
+    bool ptc_ok = pb_ntc_last_status(PB_NTC_PTC) == PB_NTC_OK && isfinite(ptc_c);
 
-    if (heat) s.heated_this_session = true;
-
-    bool cooldown = false;
-    if (!heat && s.heated_this_session) {
-        if (chamber_ok && chamber_c > PB_COOLDOWN_TEMP_C) {
-            cooldown = true;
-        } else {
-            s.heated_this_session = false;
-        }
-    }
+    bool cooldown = pb_purge_decide(heat, &s.heated_this_session,
+                                    chamber_ok, chamber_c, ptc_ok, ptc_c,
+                                    s.last_cooldown);
+    s.last_cooldown = cooldown;
 
     if (faulted && !s.last_faulted) {
         s.mode = PB_MODE_OFF;
@@ -951,6 +979,7 @@ const char *pb_policy_result_str(pb_policy_result_t result)
         case PB_POLICY_FAULT_LATCHED:     return "fault_latched";
         case PB_POLICY_INHIBITED:         return "inhibited";
         case PB_POLICY_STALE_LEASE:       return "stale_lease";
+        case PB_POLICY_PERSIST_FAILED:    return "persist_failed";
         default:                          return "unknown";
     }
 }

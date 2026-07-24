@@ -275,6 +275,7 @@ void app_main(void)
     // loop above is already running, so safety + telemetry continue.
     nvs_init();
     pb_heater_load_config();                 // apply persisted max-target + comms timeout (NVS is up now)
+    pb_heater_load_fault();                   // restore a persisted safety-fault latch (fail-safe on NVS error)
     pb_ntc_load_calibration();               // persisted per-channel offsets (clamped ±5 °C on load)
     pb_leds_load_config();                   // persisted status-LED master enable (default ON)
     pb_policy_load_params();                 // remembered mode params (never a mode/target — boot stays OFF)
