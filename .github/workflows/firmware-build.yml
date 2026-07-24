@@ -46,20 +46,64 @@ jobs:
       - name: Test authoritative policy state machine
         run: sh tests/run_policy_host_test.sh
 
+      - name: Test front-panel button state machine
+        run: sh tests/run_buttons_host_test.sh
+
       - name: Test sensor-calibration safety clamp (set + NVS-load bound)
         run: sh tests/run_ntc_calibration_host_test.sh
+
+      - name: Test NTC sample classifier (open / short / rail fail-status)
+        run: sh tests/run_ntc_status_host_test.sh
 
       - name: Test persistent fault-latch boot restore (fail-safe)
         run: sh tests/run_heater_fault_host_test.sh
 
+      - name: Test heater safety-trip decision (over-temp / fail-closed / watchdog)
+        run: sh tests/run_heater_safety_host_test.sh
+
       - name: Test HIL scenario runner
         run: python3 -m unittest tests/test_hil_runner.py
+
+      # E1 static analysis: cppcheck over OUR OWN code (components/ + main/). Fails on
+      # any error/warning/performance/portability finding (--error-exitcode). The C
+      # `error` checks are always on. False positives cppcheck's parser cannot model
+      # (e.g. GNU asm() labels on extern binary-blob symbols) are suppressed inline
+      # at the site with a justification; the missing-ESP-IDF-headers noise and the
+      # normal-check-level branch-limit note are suppressed globally (informational).
+      - name: Static analysis (cppcheck)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cppcheck
+          cppcheck --version
+          INCS=""
+          for d in components/*/include; do INCS="$INCS -I$d"; done
+          cppcheck \
+            --enable=warning,performance,portability \
+            --inline-suppr \
+            --suppress=missingInclude \
+            --suppress=missingIncludeSystem \
+            --suppress=normalCheckLevelMaxBranches \
+            --error-exitcode=2 \
+            --std=c11 \
+            $INCS \
+            components/ main/
 
       - name: Check API v2 contract and dashboard ownership
         run: |
           sh tests/check_api_v2_contract.sh
           node tests/check_dashboard_js.mjs
 
+      # E1 warnings-as-errors: enforced inside the build itself — the top-level
+      # CMakeLists applies `-Wall -Wextra -Werror` PRIVATE to every first-party pb_*
+      # component (never to ESP-IDF's own code). The default + HIL builds here and
+      # the release build in release.yml all fail on any warning in our components
+      # (verified clean under default AND sdkconfig.release).
+      #
+      # E1 dependency-lock validation is intentionally NOT a git-diff gate here:
+      # `dependencies.lock` is .gitignored (generated, not version-controlled), so
+      # there is no committed lock to drift. The ESP-IDF build step re-solves and
+      # validates the managed-component dependencies against the pinned manifests
+      # (components/*/idf_component.yml) on every run, which is the validation.
       - name: Build (ESP-IDF v5.3)
         uses: espressif/esp-idf-ci-action@9d38657f3d789ca759b2b37aaf5ceffbc42c4f0d # v1
         with:
