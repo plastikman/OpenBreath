@@ -50,16 +50,20 @@ LED / button UI — stays in this repo.
 
 ## Screenshots
 <p>
-<img src="docs/screenshots/dashboard.png" width="220" alt="Live status dashboard">
-<img src="docs/screenshots/setup.png" width="220" alt="Wi-Fi / printer setup">
-<img src="docs/screenshots/firmware-update.png" width="220" alt="OTA firmware update">
-<img src="docs/screenshots/update-available.png" width="220" alt="In-UI update notification">
+<img src="docs/screenshots/dashboard.png" width="410" alt="Live status dashboard">
+<img src="docs/screenshots/auto.png" width="410" alt="Automatic (follow printer bed) mode">
+<img src="docs/screenshots/dry.png" width="410" alt="Timed filament-drying cycle">
+<img src="docs/screenshots/settings.png" width="410" alt="Settings: safety limits and sensor calibration">
 </p>
 
-Left → right: the live status dashboard, Wi-Fi / printer setup (captive portal),
-the DragonBreath-only OTA firmware-update page, and the in-UI update notification
-(shown on official builds when a newer release is available). Served by the device
-itself over plain HTTP on your LAN.
+The responsive, touch-first web UI, served by the device itself over plain HTTP on
+your LAN and embeddable in the Fluidd / Mainsail panel: the live **dashboard**
+(chamber / PTC temperature, trend, and quick controls), **automatic** mode (arm a
+chamber target that follows the printer bed), a timed filament-**drying** cycle
+with material presets, and **settings** (safety limits, comms watchdog, and ±5 °C
+sensor calibration). Provisioning (`/setup`) and DragonBreath-only OTA (`/fw`)
+pages share the same theme. Shown in the dark theme; a light theme and an
+auto / light / dark toggle are built in.
 
 ## Hardware
 ESP32-C3-MINI-1, mains PSU, PTC heater via SSR (GPIO18), ~220 VAC blower switched
