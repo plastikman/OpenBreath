@@ -436,6 +436,11 @@ static void test_params_default_and_load_never_arms(void)
     CHECK(snap.mode == PB_MODE_OFF);
     CHECK(snap.effective_target_c == 0.0f);
     CHECK(!snap.lease_active);
+    CHECK(snap.params.manual_target_c == p.manual_target_c);
+    CHECK(snap.params.auto_target_c == p.auto_target_c);
+    CHECK(snap.params.auto_bed_threshold_c == p.auto_bed_threshold_c);
+    CHECK(snap.params.dry_target_c == p.dry_target_c);
+    CHECK(snap.params.dry_hours == p.dry_hours);
     // Defaults match an empty flash, so there is nothing to write back.
     CHECK(!pb_policy_persist_pending());
     CHECK(nvs_writes == 0);
@@ -507,6 +512,7 @@ static void test_params_persist_canonical_post_clamp_value(void)
     pb_policy_params_t p;
     pb_policy_get_params(&p);
     CHECK(p.manual_target_c == 55.0f);
+    CHECK(snapshot().params.manual_target_c == 55.0f);
 }
 
 static void test_params_failed_write_stays_dirty_and_retries(void)

@@ -86,6 +86,7 @@ typedef struct {
     float bed_c;
     bool auto_engaged;
     float auto_bed_threshold_c;
+    pb_policy_params_t params;
 
     bool drying;
     uint32_t drying_remaining_s;

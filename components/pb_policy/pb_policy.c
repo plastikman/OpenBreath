@@ -167,8 +167,9 @@ static void set_off_locked(pb_source_t source)
 static uint32_t c_to_centi(float c) { return (uint32_t)lroundf(c * 100.0f); }
 static float centi_to_c(uint32_t centi) { return (float)centi / 100.0f; }
 
-// A corrupt or absent value falls back to the default rather than to a bound,
-// so a garbage read cannot silently become "heat to the floor temperature".
+// Missing values retain the defaults installed by pb_policy_init(). Stored
+// temperatures are clamped to their safe envelope; non-finite values fall back
+// to the default defensively.
 static float clamp_or_default(float v, float lo, float hi, float dflt)
 {
     if (!isfinite(v)) return dflt;
@@ -711,6 +712,7 @@ void pb_policy_get_snapshot(pb_policy_snapshot_t *out)
     out->bed_c = s.bed_c;
     out->auto_engaged = s.auto_engaged;
     out->auto_bed_threshold_c = s.auto_bed_threshold_c;
+    out->params = s.params;
     out->drying = s.mode == PB_MODE_DRYING;
     if (out->drying && s.drying_deadline_us > now) {
         out->drying_remaining_s =

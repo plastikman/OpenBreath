@@ -169,14 +169,12 @@ static cJSON *state_json(const pb_policy_snapshot_t *s)
     // Remembered mode parameters: what a mode is re-armed with when the caller
     // supplies no values of its own (front-panel buttons), and what the UI
     // pre-fills from. These persist across reboot; active state never does.
-    pb_policy_params_t params;
-    pb_policy_get_params(&params);
     cJSON *pj = cJSON_AddObjectToObject(o, "params");
-    add_num1(pj, "manual_target_c", params.manual_target_c);
-    add_num1(pj, "auto_target_c", params.auto_target_c);
-    add_num1(pj, "auto_bed_threshold_c", params.auto_bed_threshold_c);
-    add_num1(pj, "dry_target_c", params.dry_target_c);
-    cJSON_AddNumberToObject(pj, "dry_hours", params.dry_hours);
+    add_num1(pj, "manual_target_c", s->params.manual_target_c);
+    add_num1(pj, "auto_target_c", s->params.auto_target_c);
+    add_num1(pj, "auto_bed_threshold_c", s->params.auto_bed_threshold_c);
+    add_num1(pj, "dry_target_c", s->params.dry_target_c);
+    cJSON_AddNumberToObject(pj, "dry_hours", s->params.dry_hours);
 
     cJSON *safety = cJSON_AddObjectToObject(o, "safety");
     cJSON_AddBoolToObject(safety, "fault_latched", s->fault_latched);
