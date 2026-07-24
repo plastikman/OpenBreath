@@ -7,13 +7,60 @@ below into the GitHub Release notes.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-07-24
+
+A ground-up **responsive, touch-first Web UI** (issue #19), delivered as a
+self-contained gzip-embedded single-page app that reads cleanly from a phone up
+to a desktop and embeds in the Fluidd/Mainsail panel. The rewrite also lands the
+settings/maintenance/calibration surface that backs it, sensor calibration, and
+a round of safety hardening on the mutating endpoints.
+
+### Added
+- **Touch-first single-page UI (`pb_portal/www/app.html`).** One embedded,
+  gzip-compressed SPA replaces the old status page: a live **Dashboard**
+  (chamber/PTC temps, mode, trend, stop/clear) and dedicated **Manual**,
+  **Auto**, and **Dry** control screens with sticky primary actions, plus a
+  **Settings** screen. State streams over `GET /api/v2/events` (SSE) and the UI
+  pre-fills every control from the device's remembered `params`. (#19, #21)
+- **Settings, maintenance, and diagnostics endpoints.** New v2 API surface behind
+  the auth header: `GET/POST /api/v2/calibration`, `POST /api/v2/restart`,
+  `POST /api/v2/factory-reset`, `GET /api/v2/logs` (a heap snapshot of the event
+  ring), and `POST /api/v2/token` to set/clear the control token.
+- **Sensor calibration (bounded).** Per-sensor chamber/PTC offsets, clamped to
+  **±5 °C** on both set and NVS load and applied only to good readings, so a
+  stored or requested offset can never move a safety cutoff by more than the
+  documented bound. See [`docs/SAFETY.md`](docs/SAFETY.md).
+- **Configurable status LEDs.** LEDs can be enabled/disabled from Settings
+  (persisted), reported in `/settings`.
+- **Brand mark & favicon.** An angular dragon-head logo that inherits the theme
+  and stands alone in the compact header, plus a theme-adaptive favicon — an
+  inline SVG `<link>` and a real 32×32 PNG served at `/favicon.ico` (registered
+  before the SPA catch-all) so browser tabs show the mark.
+- **Light/dark and accessibility.** An Auto/Light/Dark toggle persisted to the
+  browser, `focus-visible` outlines on all controls, a `prefers-reduced-motion`
+  path, and an `aria-label`/`title` on the connection indicator so state is not
+  conveyed by colour alone.
+
 ### Fixed
 - **Prompt control feedback across every command source.** Accepted front-panel,
   Web UI, Klipper, and HIL mode commands now wake the full control task
   immediately instead of waiting up to 500 ms for the periodic tick, so panel
   LEDs and outputs track authoritative state promptly. Rejected button commands
   now log the actual policy result, and remembered mode targets are clamped to
-  the runtime-configured heater maximum as soon as they load from NVS.
+  the runtime-configured heater maximum as soon as they load from NVS. (#20)
+- **Mutating endpoints fail closed and honestly.** `factory-reset` now captures
+  `nvs_open`/`nvs_erase_all`/`nvs_commit` results and returns HTTP 500 without
+  rebooting unless the erase and commit both succeed. Calibration and the LED
+  toggle now persist first and apply the in-RAM change only after a successful
+  commit, returning HTTP 500 `persist_failed` instead of reporting a save that
+  did not happen. Restart, factory-reset, **and** OTA (`/update`) now refuse
+  whenever the device is in any armed mode (`mode != OFF`), matching the
+  documented contract for armed Auto waiting below the bed threshold.
+
+### CI
+- The calibration clamp safety test (`run_ntc_calibration_host_test.sh`) is now a
+  required host-test step, and its load-path clamp is exercised with out-of-range
+  stored NVS values so the ±5 °C invariant is verified in CI.
 
 ## [0.4.0] - 2026-07-24
 
