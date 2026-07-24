@@ -7,6 +7,8 @@ below into the GitHub Release notes.
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-07-24
+
 ### Added
 - **Persistent safety-fault latch (B2).** A hazard-driven safety trip (PTC/chamber
   over-temp, sensor fault while heating, comms-loss watchdog) now survives a power
