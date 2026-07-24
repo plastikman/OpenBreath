@@ -8,9 +8,15 @@
 #include "esp_timer.h"
 #include "driver/gpio.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 #include "nvs.h"
 
 static const char *TAG = "pb_heater";
+
+// Serializes fault-latch NVS writes (do_latch persist, clear_fault, tick retry)
+// so a concurrent clear and a deferred-persist retry can't reorder into a stale
+// write that resurrects a just-cleared latch. NULL until pb_heater_init().
+static SemaphoreHandle_t s_persist_lock;
 
 // Heater state is touched by BOTH the control task (pb_heater_tick, via the
 // 2 Hz loop) and the HTTP task (set_target / notify_link_alive / clear_fault /
@@ -24,6 +30,9 @@ static bool        s_inhibited;     // guarded by s_mux (PERMANENT; reboot-only)
 static int64_t     s_last_link_us;  // guarded by s_mux
 static const char *s_fault_reason;  // guarded by s_mux (points at a string literal)
 static pb_fault_reason_t s_fault_code; // guarded by s_mux (machine-readable, persisted)
+static bool        s_persist_pending;  // guarded by s_mux — a latch persist not yet committed
+                                       // to NVS; retried from pb_heater_tick until it lands
+static int64_t     s_persist_retry_us; // guarded by s_mux — last persist-retry timestamp
 static bool        s_on;            // written only by the control task; atomic read
 static float       s_max_target_c;      // guarded by s_mux — settable set-point ceiling
 static int64_t     s_comms_timeout_us;  // guarded by s_mux — comms deadman (microseconds)
@@ -77,6 +86,7 @@ static void ssr_set(bool on)        // control-task context only
 
 esp_err_t pb_heater_init(void)
 {
+    if (!s_persist_lock) s_persist_lock = xSemaphoreCreateMutex();
 #ifndef CONFIG_PB_HIL_DEVBOARD
     const gpio_config_t io = {
         .pin_bit_mask = (1ULL << PB_GPIO_RELAY),
@@ -262,7 +272,20 @@ static void do_latch(pb_fault_reason_t code, const char *reason,
     s_fault_code = code;
     s_fault_reason = reason ? reason : pb_heater_fault_str(code);
     taskEXIT_CRITICAL(&s_mux);
-    if (persist && transition) persist_fault(true, code);
+    if (persist && transition) {
+        if (s_persist_lock) xSemaphoreTake(s_persist_lock, portMAX_DELAY);
+        esp_err_t pe = persist_fault(true, code);
+        if (s_persist_lock) xSemaphoreGive(s_persist_lock);
+        if (pe != ESP_OK) {
+            // The write failed (NVS busy, or a fault before nvs_init on early boot).
+            // Mark it pending so pb_heater_tick() keeps retrying until it commits —
+            // otherwise a reboot would lose a latch that only ever lived in RAM.
+            taskENTER_CRITICAL(&s_mux);
+            s_persist_pending = true;
+            taskEXIT_CRITICAL(&s_mux);
+            ESP_LOGW(TAG, "fault persist deferred (will retry): %s", pb_heater_fault_str(code));
+        }
+    }
 }
 
 // Control-task safety trip: latch (driving the SSR down) + persist + log.
@@ -303,11 +326,14 @@ esp_err_t pb_heater_clear_fault(void)
     was = s_latched_off;
     taskEXIT_CRITICAL(&s_mux);
 
-    // Persist-first: clear NVS BEFORE RAM so the two never disagree. If the persist
-    // fails, leave the fault latched (fail-safe) and report it — the heater stays
-    // off rather than falsely appearing cleared but returning on the next reboot.
+    // Persist-first, under the persist lock so a concurrent tick retry can't write
+    // a stale "latched" after this clears NVS. If the persist fails, leave the fault
+    // latched (fail-safe) and report it — the heater stays off rather than falsely
+    // appearing cleared but returning on the next reboot.
+    if (s_persist_lock) xSemaphoreTake(s_persist_lock, portMAX_DELAY);
     esp_err_t err = persist_fault(false, PB_FAULT_NONE);
     if (err != ESP_OK) {
+        if (s_persist_lock) xSemaphoreGive(s_persist_lock);
         ESP_LOGE(TAG, "clear rejected: NVS clear failed (%s) — fault stays latched", esp_err_to_name(err));
         return err;
     }
@@ -316,7 +342,9 @@ esp_err_t pb_heater_clear_fault(void)
     s_target_c = 0.0f;              // reset leaves the target at ZERO — a fresh
     s_fault_reason = NULL;          // target command is required to resume heating.
     s_fault_code = PB_FAULT_NONE;
+    s_persist_pending = false;      // NVS now holds "not latched"; nothing to retry
     taskEXIT_CRITICAL(&s_mux);
+    if (s_persist_lock) xSemaphoreGive(s_persist_lock);
     if (was) ESP_LOGW(TAG, "fault latch cleared; target reset to 0 (send a fresh target to resume)");
     return ESP_OK;
 }
@@ -386,6 +414,37 @@ bool pb_heater_heat_mode(void)     // "armed and not tripped" (independent of SS
 
 void pb_heater_tick(void)          // control-task context; sole writer of s_on
 {
+    // Retry a deferred fault-latch persist until it commits, so a latch that
+    // couldn't be written when it happened (NVS busy, or a fault before nvs_init)
+    // still survives a reboot. Throttled and serialized with clear_fault via the
+    // persist lock; re-reads the latch state INSIDE the lock so a clear that landed
+    // meanwhile is never overwritten with a stale "latched".
+    bool pending;
+    taskENTER_CRITICAL(&s_mux);
+    pending = s_persist_pending;
+    taskEXIT_CRITICAL(&s_mux);
+    if (pending) {
+        int64_t now = esp_timer_get_time();
+        taskENTER_CRITICAL(&s_mux);
+        bool due = (now - s_persist_retry_us) >= 2000000;   // ~2 s: bound NVS churn/log spam
+        taskEXIT_CRITICAL(&s_mux);
+        if (due && s_persist_lock && xSemaphoreTake(s_persist_lock, 0) == pdTRUE) {
+            taskENTER_CRITICAL(&s_mux);
+            bool still = s_latched_off;
+            pb_fault_reason_t code = s_fault_code;
+            s_persist_retry_us = now;
+            taskEXIT_CRITICAL(&s_mux);
+            esp_err_t pr = still ? persist_fault(true, code) : ESP_OK;  // cleared -> nothing to write
+            if (pr == ESP_OK) {
+                taskENTER_CRITICAL(&s_mux);
+                s_persist_pending = false;
+                taskEXIT_CRITICAL(&s_mux);
+                ESP_LOGI(TAG, "deferred fault persist committed");
+            }
+            xSemaphoreGive(s_persist_lock);
+        }
+    }
+
     float   target;
     bool    latched;
     int64_t last_link;

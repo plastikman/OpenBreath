@@ -732,15 +732,19 @@ bool pb_purge_decide(bool heat, bool *heated_this_session,
     if (heat) { *heated_this_session = true; return false; }  // heating: fan is heat's job
     if (!*heated_this_session) return false;                  // never heated -> no temp-only purge
 
-    bool hot = (chamber_ok && chamber_c >= PB_PURGE_LATCH_C) ||
-               (ptc_ok     && ptc_c     >= PB_PURGE_LATCH_C);
+    // Start the purge unless we can CONFIRM it's cool — i.e. unless BOTH sensors
+    // are known and below the latch temp. So a sensor that's hot, OR unknown right
+    // as heating ends, starts the fan (can't confirm cool -> fail safe) rather than
+    // only starting when a sensor actively reads >= the latch.
+    bool confirmed_cool = (chamber_ok && chamber_c < PB_PURGE_LATCH_C) &&
+                          (ptc_ok     && ptc_c     < PB_PURGE_LATCH_C);
     // Release only once BOTH sensors are KNOWN below the release temp; an unknown
     // (faulted) or still-hot sensor keeps the fan running (fail-safe).
     bool both_cool = (chamber_ok && chamber_c < PB_PURGE_RELEASE_C) &&
                      (ptc_ok     && ptc_c     < PB_PURGE_RELEASE_C);
 
-    bool cooldown = prev_cooldown ? !both_cool   // purging: keep on until both cool
-                                  : hot;          // idle: start only at/above the latch
+    bool cooldown = prev_cooldown ? !both_cool        // purging: keep on until both cool
+                                  : !confirmed_cool;  // idle: start unless confirmed cool
     if (!cooldown) *heated_this_session = false;  // fully cooled -> end the session purge
     return cooldown;
 }

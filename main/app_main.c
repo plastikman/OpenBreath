@@ -261,24 +261,26 @@ void app_main(void)
     ESP_ERROR_CHECK(pb_policy_init());
     ESP_ERROR_CHECK(pb_leds_start());       // indicator LEDs (pb_policy drives them)
 
-    // Start the safety/telemetry loop FIRST — it must run regardless of the
-    // network coming up (a blocking/hung network stack must never stop it). The
-    // SSR is already forced off by pb_heater_init(), so nothing can arm heat
-    // before this; there is no need to start command inputs (buttons/HIL) any
-    // earlier, and doing so would let a press arm a target before this task —
-    // the sole actuator — is even running.
-    xTaskCreate(control_task, "pb_control", 4096, NULL, 10, &s_control_task);
-    pb_policy_set_wake_cb(control_wake);     // accepted commands can now wake the loop
-    ESP_LOGI(TAG, "control loop running; heater held OFF (bring-up: no auto-heat)");
-
-    // Bring up networking. If a start call blocks under a flaky link, the control
-    // loop above is already running, so safety + telemetry continue.
+    // Bring up NVS and load persisted config/state BEFORE the control task starts.
+    // NVS is local + fast (unlike network bring-up, which stays after the safety
+    // loop), and the control task must see a restored fault latch on its very first
+    // tick AND be able to persist a fault that trips during early boot — so a
+    // safety trip can never be lost across a reboot for want of an initialized NVS.
     nvs_init();
-    pb_heater_load_config();                 // apply persisted max-target + comms timeout (NVS is up now)
-    pb_heater_load_fault();                   // restore a persisted safety-fault latch (fail-safe on NVS error)
+    pb_heater_load_config();                 // persisted max-target + comms timeout
+    pb_heater_load_fault();                  // restore a persisted safety-fault latch (fail-safe on NVS error)
     pb_ntc_load_calibration();               // persisted per-channel offsets (clamped ±5 °C on load)
     pb_leds_load_config();                   // persisted status-LED master enable (default ON)
     pb_policy_load_params();                 // remembered mode params (never a mode/target — boot stays OFF)
+
+    // Start the safety/telemetry loop — it then runs regardless of the network
+    // coming up (a blocking/hung network stack must never stop it). The SSR is
+    // already forced off by pb_heater_init(), so nothing can arm heat before this;
+    // command inputs (buttons/HIL) start after so a press can't arm a target before
+    // this task — the sole actuator — is running.
+    xTaskCreate(control_task, "pb_control", 4096, NULL, 10, &s_control_task);
+    pb_policy_set_wake_cb(control_wake);     // accepted commands can now wake the loop
+    ESP_LOGI(TAG, "control loop running; heater held OFF (bring-up: no auto-heat)");
 
     // Command inputs come up AFTER the actuator task and the remembered params:
     // a button press arms a mode from those params, so both must exist first.

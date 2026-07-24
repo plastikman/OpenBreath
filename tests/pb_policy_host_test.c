@@ -922,6 +922,15 @@ static void test_purge_decide_session_and_hysteresis(void)
     // A faulted/unknown sensor while purging keeps the fan on (can't confirm cool).
     heated = true;
     CHECK(pb_purge_decide(false, &heated, false, 0.0f, true, 30.0f, true) == true);
+
+    // Sensors UNKNOWN exactly as heating ends (prev=false) -> START the purge: we
+    // can't confirm it's cool, so fail safe rather than skipping the cooldown.
+    heated = true;
+    CHECK(pb_purge_decide(false, &heated, false, 0.0f, false, 0.0f, false) == true);
+    // ...but a single known-cool sensor with the other unknown still can't confirm
+    // cool -> also purge (conservative).
+    heated = true;
+    CHECK(pb_purge_decide(false, &heated, true, 25.0f, false, 0.0f, false) == true);
 }
 
 int main(void)
