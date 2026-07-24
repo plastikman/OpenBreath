@@ -59,21 +59,38 @@ Four front-panel LEDs, matching the stock panel (direct active-high GPIO):
 
 - The driver supports OFF, solid, fast/slow blink, and pulse-code patterns on
   all four mapped outputs.
-- **On** (GPIO5), plus **Power** (GPIO21) in release builds, are currently solid
-  whenever a heat target is armed (including thermostat-off portions of the
-  cycle), blink on a latched fault, and are off otherwise.
-- **Auto** (GPIO6) and **Dry** (GPIO4) are initialized off but currently receive
-  no mode updates from policy, so they remain off.
+- All four are driven from the authoritative policy snapshot, so the panel alone
+  tells you the active mode:
+  - **Power** (GPIO21, release builds) is the device-health light — solid
+    whenever the device is up, blinking on a latched fault.
+  - **On** (GPIO5) is solid in manual POWER_ON.
+  - **Auto** (GPIO6) is solid while AUTO is engaged and slow-blinks while AUTO is
+    armed but waiting (no Moonraker link, or the bed is below the threshold).
+  - **Dry** (GPIO4) is solid while drying.
+- A fault forces the mode OFF, so the mode LEDs go dark and Power blinks.
 - GPIO21 is also console TX. Development builds leave it as serial output;
   release builds enable `CONFIG_PB_POWER_LED` and use it for the Power LED.
 
 ## Front-panel buttons
 
-The four active-low inputs have been live-probed and mapped: Power GPIO9, Auto
-GPIO8, On GPIO10, and Dry GPIO2. That mapping is the full extent of today's
-implementation: there is no button GPIO initialization, polling task, debounce,
-short/long-press detection, or policy callback, so button presses currently do
-nothing. Phase C defines the proposed behavior and hardware-validation gates.
+The four active-low inputs (Power GPIO9, Auto GPIO8, On GPIO10, Dry GPIO2) are
+polled at 10 ms with 20 ms debounce and short/long-press detection (`pb_buttons`):
+
+- A **short press** toggles that button's labeled mode, arming it from the
+  remembered parameters (last-used target/threshold/hours); pressing it again, or
+  pressing Power, returns to OFF.
+- A **2 s long-press** on any button latches a **panic-off** — heater off, mode
+  OFF, remote lease invalidated. It is not a safety-rated emergency stop (see
+  [`SAFETY.md`](SAFETY.md)); the hardware over-temp backstops remain the
+  emergency layer.
+- A **long-press on Power while faulted** attempts a fault clear instead, which
+  only holds if the underlying condition has recovered.
+
+Every action is attributed to the panel (source `button`) and appears in the
+dashboard and Klipper. A button held at power-on is ignored until released, since
+Power/Auto/Dry are ESP32-C3 strapping pins — **don't hold a button while the
+board boots**. The real-Panda functional checklist and the scripted devboard-HIL
+button scenario both passed on physical hardware (2026-07-24).
 
 ## Fan
 
