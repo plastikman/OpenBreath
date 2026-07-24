@@ -25,6 +25,7 @@
 #include "pb_fan.h"
 #include "pb_policy.h"
 #include "pb_leds.h"
+#include "pb_hil.h"
 
 #include "esp_wifi.h"
 #include "esp_mac.h"
@@ -62,6 +63,7 @@ static volatile bool s_mk_up = false;
 // default (pre-DragonBreath rebrand) so an already-provisioned device adopts the new
 // name, while preserving any user-customized SSID. (mDNS hostname is overridden
 // separately in brand_hostname().)
+#ifndef CONFIG_PB_HIL_DEVBOARD
 static void brand_ap(void)
 {
     nvs_handle_t h;
@@ -104,6 +106,7 @@ static void brand_hostname(void)
     mdns_service_instance_name_set("_http", "_tcp", HN);
     ESP_LOGI(TAG, "mDNS hostname override: %s.local", HN);
 }
+#endif
 
 static void nvs_init(void)
 {
@@ -168,9 +171,11 @@ static void control_task(void *arg)
 
     for (;;) {
         pv_moonraker_status_t st = {0};
+#ifndef CONFIG_PB_HIL_DEVBOARD
         if (s_net_up && s_mk_up) pv_moonraker_get_status(&st);
         bool mk_connected = s_mk_up && st.state == PV_MK_SUBSCRIBED;
         pb_policy_set_env(st.bed_temp, mk_connected);
+#endif
 
         // Safety/control loop: enforces every heater cutoff + fan-follows-heater.
         // pb_policy is the sole mode/target writer. Network clients and local
@@ -210,6 +215,9 @@ void app_main(void)
     ESP_ERROR_CHECK(pb_fan_init());
     ESP_ERROR_CHECK(pb_policy_init());
     ESP_ERROR_CHECK(pb_leds_start());       // indicator LEDs (pb_policy drives them)
+#ifdef CONFIG_PB_HIL_CONSOLE
+    ESP_ERROR_CHECK(pb_hil_start());
+#endif
 
     // Start the safety/telemetry loop FIRST — it must run regardless of the
     // network coming up (a blocking/hung network stack must never stop it).
@@ -220,6 +228,7 @@ void app_main(void)
     // loop above is already running, so safety + telemetry continue.
     nvs_init();
     pb_heater_load_config();                 // apply persisted max-target + comms timeout (NVS is up now)
+#ifndef CONFIG_PB_HIL_DEVBOARD
     brand_ap();                              // AP name = DragonBreath_XXXX
 #if defined(DB_WIFI_SSID) || defined(DB_MOONRAKER_HOST)
     seed_dev_config();
@@ -246,6 +255,9 @@ void app_main(void)
 
     s_net_up = true;
     ESP_LOGI(TAG, "network bring-up done (wifi + moonraker + http api + portal, best-effort)");
+#else
+    ESP_LOGW(TAG, "HIL dev-board target: network stack skipped; inject env over serial");
+#endif
 
     // OTA rollback confirm: we reached a healthy state (safety loop running, init
     // complete), so mark this image valid and cancel the pending-verify rollback.

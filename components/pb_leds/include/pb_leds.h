@@ -43,3 +43,6 @@ void pb_leds_set(pb_led_id_t id, pb_led_pattern_t pattern);
 
 // Set a LED to the CODE pattern blinking `pulses` short pulses per cycle.
 void pb_leds_set_code(pb_led_id_t id, uint8_t pulses);
+
+// Current logical pattern, including when dev-board HIL compiles GPIO out.
+pb_led_pattern_t pb_leds_get(pb_led_id_t id);

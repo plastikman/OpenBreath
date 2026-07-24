@@ -1,0 +1,20 @@
+menu "DragonBreath hardware-in-loop"
+
+config PB_HIL_CONSOLE
+    bool "Enable the serial HIL command console"
+    default n
+    help
+        Accept line-delimited JSON commands on the configured console UART and
+        emit machine-readable DBHIL responses alongside normal ESP-IDF logs.
+        This is intended for development and qualification images only.
+
+config PB_HIL_DEVBOARD
+    bool "Build for a safe ESP32-C3 development board"
+    depends on PB_HIL_CONSOLE
+    default n
+    help
+        Compile out every Panda mains GPIO write. Thermistors, zero-cross, and
+        network state are supplied by the HIL console. Heater and fan outputs
+        remain logical state only, so this image cannot energize Panda hardware.
+
+endmenu

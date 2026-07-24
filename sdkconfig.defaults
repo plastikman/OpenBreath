@@ -9,9 +9,10 @@ CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
 # Size-optimize (the app slot is ~1.8MB; stock image is ~1.3MB)
 CONFIG_COMPILER_OPTIMIZATION_SIZE=y
 
-# Console on UART0 (CH340K USB-C bridge, GPIO21/20). The C3 native USB-Serial-JTAG
-# is NOT usable here: its D-/D+ pads are GPIO18/19 and GPIO18 drives the heater SSR.
-CONFIG_ESP_CONSOLE_UART_DEFAULT=y
+# Kconfig defaults production images to UART0 (CH340K USB-C bridge, GPIO21/20).
+# Do not pin the choice here: the safe dev-board HIL overlay deliberately selects
+# native USB Serial/JTAG. Native USB is NOT usable on Panda hardware because its
+# D-/D+ pads are GPIO18/19 and GPIO18 drives the heater SSR.
 
 # Task watchdog on — a hung control loop must not leave the heater energized.
 # (pb_control subscribes via esp_task_wdt_add and pets it each loop.)

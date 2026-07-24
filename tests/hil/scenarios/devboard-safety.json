@@ -1,0 +1,140 @@
+{
+  "name": "devboard safety and ownership",
+  "targets": ["devboard"],
+  "steps": [
+    {
+      "name": "boot is safe and mains GPIO is absent",
+      "send": {"cmd": "state"},
+      "expect": {
+        "ok": true,
+        "state.mode": "off",
+        "state.heater_output": false,
+        "state.io.target": "devboard",
+        "state.io.mains_gpio_compiled_out": true
+      }
+    },
+    {
+      "name": "inject nominal chamber sensor",
+      "send": {
+        "cmd": "sensor",
+        "channel": "chamber",
+        "status": "ok",
+        "temp_c": 25
+      }
+    },
+    {
+      "name": "inject nominal PTC sensor",
+      "send": {
+        "cmd": "sensor",
+        "channel": "ptc",
+        "status": "ok",
+        "temp_c": 25
+      }
+    },
+    {
+      "name": "request remote heat and capture lease",
+      "send": {"cmd": "mode", "mode": "power_on", "target_c": 50},
+      "expect": {
+        "ok": true,
+        "state.mode": "power_on",
+        "state.lease_active": true
+      },
+      "save": {"lease": "lease_id"}
+    },
+    {"name": "allow control tick", "wait_s": 0.7},
+    {
+      "name": "logical heater turns on without a mains GPIO",
+      "send": {"cmd": "state"},
+      "expect": {
+        "ok": true,
+        "state.heater_demand": true,
+        "state.heater_output": true,
+        "state.io.mains_gpio_compiled_out": true
+      }
+    },
+    {
+      "name": "active lease heartbeat succeeds",
+      "send": {"cmd": "heartbeat", "lease_id": "$lease"},
+      "expect": {"ok": true, "result": "ok"}
+    },
+    {
+      "name": "chamber open circuit is injected",
+      "send": {"cmd": "sensor", "channel": "chamber", "status": "open"}
+    },
+    {"name": "allow safety tick", "wait_s": 0.7},
+    {
+      "name": "sensor fault latches off and forces airflow",
+      "send": {"cmd": "state"},
+      "expect": {
+        "ok": true,
+        "state.mode": "off",
+        "state.heater_output": false,
+        "state.fault_latched": true,
+        "state.fault_reason": "chamber sensor fault",
+        "state.fan_percent": 100
+      }
+    },
+    {
+      "name": "fault invalidates the old lease",
+      "send": {"cmd": "heartbeat", "lease_id": "$lease"},
+      "expect": {"ok": false, "result": "stale_lease"}
+    },
+    {
+      "name": "restore chamber sensor",
+      "send": {
+        "cmd": "sensor",
+        "channel": "chamber",
+        "status": "ok",
+        "temp_c": 25
+      }
+    },
+    {
+      "name": "explicit clear returns to off",
+      "send": {"cmd": "clear_fault"},
+      "expect": {
+        "ok": true,
+        "state.mode": "off",
+        "state.fault_latched": false,
+        "state.heater_output": false
+      }
+    },
+    {
+      "name": "PTC over-temperature setup",
+      "send": {"cmd": "mode", "mode": "power_on", "target_c": 50}
+    },
+    {
+      "name": "inject PTC over-temperature",
+      "send": {
+        "cmd": "sensor",
+        "channel": "ptc",
+        "status": "ok",
+        "temp_c": 106
+      }
+    },
+    {"name": "allow over-temperature tick", "wait_s": 0.7},
+    {
+      "name": "fixed PTC cutoff latches off",
+      "send": {"cmd": "state"},
+      "expect": {
+        "ok": true,
+        "state.fault_latched": true,
+        "state.fault_reason": "PTC element over-temp",
+        "state.heater_output": false
+      }
+    },
+    {
+      "name": "restore PTC sensor",
+      "send": {"cmd": "sensor", "channel": "ptc", "status": "ok", "temp_c": 25}
+    },
+    {"name": "clear PTC fault", "send": {"cmd": "clear_fault"}},
+    {
+      "name": "inject zero-cross events",
+      "send": {"cmd": "zero_cross", "count": 12, "interval_us": 10000},
+      "expect": {
+        "ok": true,
+        "state.io.zero_cross_count": {"gte": 12},
+        "state.io.zero_cross_interval_us": 10000
+      }
+    }
+  ]
+}

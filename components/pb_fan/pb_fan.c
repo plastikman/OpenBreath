@@ -25,6 +25,7 @@ static volatile uint32_t s_zc_count;
 static volatile uint32_t s_zc_interval_us;
 static volatile uint64_t s_zc_last_us;
 
+#ifndef CONFIG_PB_HIL_DEVBOARD
 static void IRAM_ATTR zcd_isr(void *arg)
 {
     uint64_t now = esp_timer_get_time();
@@ -38,9 +39,19 @@ static void IRAM_ATTR zcd_isr(void *arg)
         s_applied = on;
     }
 }
+#endif
 
 esp_err_t pb_fan_init(void)
 {
+#ifdef CONFIG_PB_HIL_DEVBOARD
+    s_want_on = false;
+    s_applied = false;
+    s_zc_count = 0;
+    s_zc_interval_us = 0;
+    s_zc_last_us = 0;
+    ESP_LOGW(TAG, "HIL dev-board backend: fan gate and ZCD GPIOs compiled out");
+    return ESP_OK;
+#else
     const gpio_config_t gate = {
         .pin_bit_mask = (1ULL << PB_GPIO_FAN_GATE),
         .mode = GPIO_MODE_OUTPUT,
@@ -69,6 +80,7 @@ esp_err_t pb_fan_init(void)
     ESP_LOGI(TAG, "init: ON/OFF held-gate (stock model), gate GPIO%d, ZCD GPIO%d; never PWM'd",
              PB_GPIO_FAN_GATE, PB_GPIO_ZERO_CROSS);
     return ESP_OK;
+#endif
 }
 
 void pb_fan_set_level(uint8_t percent)
@@ -76,7 +88,9 @@ void pb_fan_set_level(uint8_t percent)
     bool on = (percent > 0);
     s_want_on = on;
     if (!on) {                                     // turn OFF immediately (don't wait for a ZC)
+#ifndef CONFIG_PB_HIL_DEVBOARD
         gpio_set_level(PB_GPIO_FAN_GATE, 0);
+#endif
         s_applied = false;
     }
     // ON is applied at the next zero cross by the ISR (clean AC switching).
@@ -89,3 +103,13 @@ void pb_fan_zc_diag(uint32_t *count_out, uint32_t *interval_us_out)
     if (count_out) *count_out = s_zc_count;
     if (interval_us_out) *interval_us_out = s_zc_interval_us;
 }
+
+#ifdef CONFIG_PB_HIL_DEVBOARD
+void pb_fan_hil_zero_cross(uint32_t count, uint32_t interval_us)
+{
+    if (count == 0) return;
+    s_zc_count += count;
+    s_zc_interval_us = interval_us;
+    s_applied = s_want_on;
+}
+#endif
