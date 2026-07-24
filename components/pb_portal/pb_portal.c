@@ -116,37 +116,48 @@ static void html_attr_escape(const char *in, char *out, size_t outsz)
 }
 
 // ---- static page pieces ----
-// Styled to match the stock BIQU Panda Breath web UI (dark #272525 page, #333
-// rounded cards, Arial, blue accent) — palette lifted from the stock firmware,
-// with the primary accent switched from stock red to the stock's blue (#4087FE).
-// Shared head + CSS + header + <div class=wrap> — used by both the status page
-// (STA root) and the config page (AP captive / /setup).
+// Charcoal palette + dragon mark matching the STA-mode SPA (app.html) in its dark
+// theme, so /setup, /fw, and the AP captive portal read as the same product rather
+// than the old stock-BIQU blue look. Shared head + CSS + header + <div class=wrap>,
+// used by both the config page (AP captive / /setup) and the /fw update page. These
+// utility pages stay dark (the SPA carries the light/dark toggle).
 static const char PAGE_HEAD[] =
-    "<!doctype html><html><head><meta charset=utf-8>"
+    "<!doctype html><html lang=en><head><meta charset=utf-8>"
     "<meta name=viewport content='width=device-width,initial-scale=1'>"
+    "<meta name=color-scheme content=dark><meta name=referrer content=no-referrer>"
+    "<link rel=icon href=/favicon.ico>"
     "<title>DragonBreath</title><style>"
-    ":root{--bg:#272525;--card:#333;--accent:#4087FE;--text:#F0F0F0;--input:#2c2c2c;--border:rgba(255,255,255,.12);color-scheme:dark}"
+    ":root{color-scheme:dark;--bg:#181818;--card:rgba(255,255,255,.05);--accent:#83c3ff;"
+    "--accent-fg:#0d0d0d;--text:#fff;--muted:rgba(255,255,255,.55);--input:rgba(0,0,0,.18);"
+    "--border:rgba(255,255,255,.14);--bad:#ff8549}"
     "*{box-sizing:border-box}"
-    "body{margin:0;background:var(--bg);font-family:Arial,Helvetica,sans-serif;color:var(--text)}"
-    ".hdr{background:linear-gradient(135deg,#4087FE 0%,#0a2e6b 100%);padding:22px 16px 18px;text-align:center}"
-    ".hdr h1{margin:0;font-size:1.4rem}.hdr p{margin:.25em 0 0;font-size:.8rem;color:#cdddff}"
-    ".wrap{max-width:27em;margin:0 auto;padding:16px}"
-    ".card{background:var(--card);border-radius:16px;padding:16px;margin:16px 0}"
-    ".card h2{margin:0 0 .2em;font-size:1.1rem;font-weight:600;color:var(--accent)}"
-    "label{display:block;margin:.85em 0 .3em;font-size:.8rem;color:#bdbdbd}"
-    "input,select{width:100%;padding:12px 14px;font-size:1rem;background:var(--input);color:var(--text);"
+    "body{margin:0;background:var(--bg);color:var(--text);"
+    "font:14px/1.4 -apple-system,system-ui,'Segoe UI',Roboto,sans-serif}"
+    ".hdr{display:flex;align-items:center;justify-content:center;gap:9px;padding:16px;"
+    "border-bottom:1px solid var(--border);background:var(--card)}"
+    ".hdr svg{width:27px;height:27px;fill:currentColor}"
+    ".hdr h1{margin:0;font-size:1.15rem;font-weight:700}"
+    ".wrap{max-width:28em;margin:0 auto;padding:16px}"
+    ".card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:16px;margin:14px 0}"
+    ".card h2{margin:0 0 .3em;font-size:1rem;font-weight:600}"
+    "label{display:block;margin:.85em 0 .3em;font-size:.8rem;color:var(--muted)}"
+    "input,select{width:100%;padding:11px 13px;font-size:1rem;background:var(--input);color:var(--text);"
     "border:1px solid var(--border);border-radius:8px}"
-    "input:focus,select:focus{outline:none;border-color:var(--accent)}"
+    "input:focus,select:focus{outline:2px solid var(--accent);outline-offset:1px;border-color:var(--accent)}"
     ".pw{display:flex;gap:8px}.pw input{flex:1}"
-    ".pw button{width:52px;flex:none;background:var(--input);border:1px solid var(--border);border-radius:8px;font-size:1.2rem;cursor:pointer}"
-    "button.go{width:100%;padding:14px;margin-top:6px;border:0;border-radius:10px;background:var(--accent);color:#fff;font-size:1.05rem;font-weight:600;cursor:pointer}"
-    "button.sec{width:100%;padding:10px;margin-top:12px;border:1px solid var(--border);border-radius:8px;background:#3a3a3a;color:#ddd;cursor:pointer}"
-    "button.sec.active{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}"
-    "button:disabled{opacity:.4;cursor:not-allowed}"
-    ".srow{display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid rgba(255,255,255,.07)}.srow:last-child{border:0}"
-    ".msg{min-height:1.2em;margin-top:.55em;font-size:.76rem;color:#bdbdbd}.msg.bad{color:#ff9d9d}"
-    "small{color:#8a8a8a}a{color:#4aa3ff}</style></head><body>"
-    "<div class=hdr><h1>\xF0\x9F\x90\x89 DragonBreath</h1></div>"
+    ".pw button{width:50px;flex:none;background:var(--input);border:1px solid var(--border);border-radius:8px;font-size:1.1rem;cursor:pointer;color:var(--text)}"
+    "button.go{width:100%;padding:13px;margin-top:8px;border:0;border-radius:9px;background:var(--accent);color:var(--accent-fg);font-size:1rem;font-weight:600;cursor:pointer}"
+    "button.sec{width:100%;padding:10px;margin-top:12px;border:1px solid var(--border);border-radius:8px;background:transparent;color:var(--text);cursor:pointer}"
+    "button.sec.active{background:var(--accent);border-color:var(--accent);color:var(--accent-fg);font-weight:600}"
+    "button:disabled{opacity:.45;cursor:not-allowed}"
+    ".srow{display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border)}.srow:last-child{border:0}"
+    ".msg{min-height:1.2em;margin-top:.55em;font-size:.78rem;color:var(--muted)}.msg.bad{color:var(--bad)}"
+    "small{color:var(--muted)}a{color:var(--accent)}h3{margin:.2em 0}code{font-size:.9em}</style></head><body>"
+    "<div class=hdr>"
+    "<svg viewBox='0 0 32 32' aria-hidden=true><path fill-rule=evenodd "
+    "d='M2 15 L8 13 L11 11 L13 8 L15 10 L21 3 L18 11 L21 13 L24 15 L28 17 L23 18 L27 22 L20 20 L18 20 L16 19 L3 19 Z "
+    "M10 12 a1.4 1.4 0 100 2.8 1.4 1.4 0 000-2.8Z'/></svg>"
+    "<h1>DragonBreath</h1></div>"
     "<div class=wrap>";
 
 // Wi-Fi form card (config page).

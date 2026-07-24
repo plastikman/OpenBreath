@@ -7,6 +7,21 @@ below into the GitHub Release notes.
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-07-24
+
+### Fixed
+- **Web UI no longer sprawls on large / 4K displays.** The SPA is built to fill
+  its Fluidd/Mainsail iframe, so opening it standalone on a big monitor stretched
+  every element edge-to-edge. It is now bounded to a centered panel (max
+  1200×820) on large viewports while still filling a small embed.
+- **Control-screen action button no longer floats over the last control.** On
+  Manual/Auto/Dry the primary action (e.g. "Start drying") used a sticky footer
+  that overlapped the final control (target/duration) when the screen was tight.
+  The action now sits in normal flow directly below the controls.
+- **Firmware-update (`/fw`), Wi-Fi setup (`/setup`), and the AP captive portal
+  match the new UI.** These pages still used the old stock-BIQU blue banner; they
+  now use the charcoal palette and dragon mark of the main app.
+
 ## [0.5.0] - 2026-07-24
 
 A ground-up **responsive, touch-first Web UI** (issue #19), delivered as a
