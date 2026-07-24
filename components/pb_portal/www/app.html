@@ -1,0 +1,486 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>DragonBreath</title>
+<style>
+/* ---- Charcoal Fluidd/Mainsail token system (light + dark via light-dark()).
+   Lifted from the approved design prototype; do not depend on the old blue. ---- */
+:root{
+  color-scheme: light dark;
+  --background: light-dark(rgb(255 255 255), rgb(24 24 24));
+  --foreground: light-dark(rgb(26 28 31), rgb(255 255 255));
+  --card: color-mix(in oklab, var(--foreground) 5%, transparent);
+  --primary: light-dark(rgb(51 156 255), rgb(131 195 255));
+  --primary-foreground: light-dark(rgb(255 255 255), rgb(13 13 13));
+  --secondary: light-dark(rgb(255 255 255 / 96%), rgb(54 54 54 / 96%));
+  --secondary-foreground: var(--foreground);
+  --muted: color-mix(in srgb, var(--foreground) 10%, transparent);
+  --muted-foreground: light-dark(rgb(26 28 31 / 49.4%), rgb(255 255 255 / 49.8%));
+  --destructive: light-dark(rgb(226 85 7), rgb(255 133 73));
+  --border: light-dark(rgb(26 28 31 / 8%), rgb(255 255 255 / 8.2%));
+  --input: light-dark(rgb(26 28 31 / 11.8%), color-mix(in oklab, rgb(0 0 0) 10%, transparent));
+  --ring: light-dark(rgb(51 156 255), rgb(131 195 255 / 76%));
+  --viz-series-1: var(--primary);
+  --viz-series-2: light-dark(rgb(93 201 119), rgb(116 213 139));
+  --viz-series-3: light-dark(rgb(243 136 59), rgb(245 154 86));
+  --font-sans: -apple-system, system-ui, "Segoe UI", Roboto, sans-serif;
+  --radius-lg: 8px; --radius-sm: 5px; --radius-full: 9999px;
+}
+:root[data-theme="light"]{ color-scheme: light; }
+:root[data-theme="dark"]{ color-scheme: dark; }
+
+*{ box-sizing: border-box; }
+html,body{ height:100%; margin:0; }
+body{
+  color: var(--foreground);
+  background: var(--background);
+  font: 14px/1.35 var(--font-sans);
+  overflow: hidden;              /* embeds cleanly in a Fluidd/Mainsail iframe */
+}
+[hidden]{ display: none !important; }
+
+/* ---- Controls (btn / form-range / form-select), from the prototype token kit ---- */
+.btn{
+  appearance: button; display: inline-flex; min-height: 28px;
+  align-items: center; justify-content: center; gap: 4px;
+  margin: 0; padding: 0 8px;
+  border: 1px solid var(--input); border-radius: var(--radius-lg);
+  color: var(--secondary-foreground); background: var(--secondary);
+  cursor: pointer; text-align: center; white-space: nowrap; user-select: none;
+  font: inherit;
+}
+.btn:not(:disabled):hover{ background: color-mix(in srgb, var(--foreground) 6%, var(--secondary)); }
+.btn:focus-visible{ outline: 2px solid var(--ring); outline-offset: 2px; }
+.btn:disabled{ cursor: not-allowed; opacity: .4; }
+.btn-sm{ min-height: 26px; font-size: 12px; }
+.btn-block{ width: 100%; }
+.btn-primary{ border-color: transparent; color: var(--primary-foreground); background: var(--foreground); }
+.btn-primary:not(:disabled):hover{ background: color-mix(in srgb, var(--foreground) 80%, transparent); }
+.btn:not(.btn-primary)[aria-pressed="true"],
+.btn:not(.btn-primary).is-selected{
+  border-color: var(--primary); color: var(--primary-foreground); background: var(--primary);
+}
+.form-range{
+  appearance: none; display: block; width: 100%; height: 28px; flex: 1;
+  margin: 0; padding: 0; border: 0; accent-color: var(--primary);
+  background: linear-gradient(color-mix(in srgb,var(--foreground) 7%,transparent),
+    color-mix(in srgb,var(--foreground) 7%,transparent)) center / 100% 2px no-repeat;
+}
+.form-range::-webkit-slider-thumb{ appearance:none; width:20px; height:20px; margin-top:4px;
+  border:1px solid var(--border); border-radius:var(--radius-full);
+  background: light-dark(var(--primary-foreground), var(--foreground)); }
+.form-range::-moz-range-thumb{ width:20px; height:20px; border:1px solid var(--border);
+  border-radius:var(--radius-full); background: light-dark(var(--primary-foreground), var(--foreground)); }
+.form-select{
+  appearance:none; display:block; width:100%; min-height:28px; padding:0 28px 0 8px;
+  border:1px solid var(--input); border-radius:var(--radius-lg);
+  color:var(--foreground); background-color:var(--secondary);
+  background-image: linear-gradient(45deg,transparent 50%,var(--muted-foreground) 50%),
+    linear-gradient(135deg,var(--muted-foreground) 50%,transparent 50%);
+  background-position: calc(100% - 14px) 50%, calc(100% - 10px) 50%;
+  background-repeat:no-repeat; background-size:4px 4px; font:inherit;
+}
+
+svg.icon{ width: 20px; height: 20px; fill: none; stroke: currentColor;
+  stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+
+/* ---- Shell: topbar + icon rail + main. .app is the responsive query container. ---- */
+.app{ container-type: inline-size; height: 100%; }
+.shell{
+  height: 100%;
+  display: grid;
+  grid-template: 44px minmax(0, 1fr) / 50px minmax(0, 1fr);
+}
+.topbar{
+  grid-column: 1 / -1; display: flex; align-items: center; gap: 9px;
+  min-width: 0; padding: 0 11px;
+  border-bottom: 1px solid var(--border); background: var(--card);
+}
+.brand{ display: flex; align-items: center; gap: 8px; min-width: 0; font-weight: 700; }
+.brand svg{ width: 27px; height: 27px; flex: none; }
+.brand span{ white-space: nowrap; }
+.connection{ margin-left: auto; display: flex; align-items: center; gap: 6px;
+  color: var(--muted-foreground); font-size: 12px; }
+.dot{ width: 8px; height: 8px; border-radius: 50%; background: var(--muted-foreground); }
+.app[data-online="1"] .dot{ background: var(--viz-series-2); }
+
+.rail{
+  min-height: 0; display: flex; flex-direction: column; align-items: center; gap: 4px;
+  padding: 7px 5px; border-right: 1px solid var(--border); background: var(--card);
+}
+.tab{
+  width: 38px; height: 38px; display: grid; place-items: center;
+  border: 0; border-left: 3px solid transparent; border-radius: 3px;
+  background: transparent; color: var(--muted-foreground); cursor: pointer;
+}
+.tab:hover{ background: var(--muted); color: var(--foreground); }
+.tab[aria-selected="true"]{
+  color: var(--primary); border-left-color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 12%, transparent);
+}
+.tab:last-child{ margin-top: auto; }
+
+.main{ min-width: 0; min-height: 0; overflow: hidden; padding: 12px; }
+.heading{ display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+.heading h2{ margin: 0; font-size: 18px; }
+.mode{ padding: 3px 7px; border: 1px solid var(--border); border-radius: 3px;
+  color: var(--muted-foreground); font-size: 11px; text-transform: uppercase; }
+
+.grid{
+  height: calc(100% - 35px); display: grid;
+  grid-template-columns: minmax(0, 1.18fr) minmax(180px, .82fr);
+  grid-template-rows: minmax(0, 1fr) minmax(88px, .55fr); gap: 9px;
+}
+.card{ position: relative; min-width: 0; min-height: 0; padding: 11px; overflow: hidden;
+  border: 1px solid var(--border); border-radius: 5px; background: var(--card); }
+.card h3{ margin: 0; color: var(--muted-foreground); font-size: 11px; font-weight: 600;
+  text-transform: uppercase; }
+
+.temperature{ position: relative; z-index: 1; display: flex; justify-content: space-between;
+  align-items: end; gap: 12px; margin-top: 6px; }
+.chamber-reading strong{ font-size: 34px; line-height: 1; }
+.temperature span{ color: var(--muted-foreground); }
+.ptc-reading{ display: flex; align-items: baseline; justify-content: flex-end; gap: 6px;
+  padding-bottom: 2px; text-align: right; white-space: nowrap; }
+.ptc-reading span{ font-size: 11px; text-transform: uppercase; }
+.ptc-reading strong{ font-size: 17px; font-weight: 500; }
+.bar{ position: relative; z-index: 1; height: 7px; margin: 12px 0 8px; overflow: hidden;
+  border-radius: 2px; background: var(--muted); }
+.bar span{ display: block; width: 0; height: 100%; background: var(--viz-series-1);
+  transition: width .3s ease; }
+.target{ color: var(--muted-foreground); font-size: 12px; }
+
+.temp-chart{ position: absolute; inset: 28px 7px 7px; width: calc(100% - 14px);
+  height: calc(100% - 35px); color: var(--viz-series-1); opacity: .28; pointer-events: none; }
+.temp-chart .gridline{ stroke: var(--border); stroke-width: 1; }
+.temp-chart .area{ fill: color-mix(in srgb, var(--viz-series-1) 18%, transparent); stroke: none; }
+.temp-chart .line{ fill: none; stroke: currentColor; stroke-width: 2.2; vector-effect: non-scaling-stroke; }
+
+.status-card{ display: flex; flex-direction: column; gap: 8px; }
+.state{ display: flex; align-items: center; gap: 8px; margin-top: 2px; font-size: 17px; font-weight: 700; }
+.state-light{ width: 11px; height: 11px; flex: none; border-radius: 50%; background: var(--muted-foreground); }
+.app[data-state="heating"] .state-light,
+.app[data-state="drying"] .state-light{ background: var(--viz-series-1); }
+.app[data-state="waiting"] .state-light{ background: var(--viz-series-3); }
+.app[data-state="fault"] .state-light{ background: var(--destructive); }
+.summary{ min-height: 36px; color: var(--muted-foreground); font-size: 12px; }
+.actions{ display: flex; gap: 6px; margin-top: auto; }
+.actions .btn{ flex: 1; }
+
+.quick-card{ grid-column: 1 / -1; padding-bottom: 8px; }
+.quick-actions{ display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 10px; }
+.quick-actions .btn{ display: flex; justify-content: center; align-items: center; gap: 6px; }
+
+.page-only{ display: none; height: calc(100% - 35px); padding: 18px; overflow: auto;
+  border: 1px solid var(--border); border-radius: 5px; background: var(--card); }
+.page-only h3{ margin: 0 0 8px; font-size: 15px; }
+.page-only p{ max-width: 520px; color: var(--muted-foreground); }
+.page-only .stub-note{ margin-top: 14px; font-size: 12px; color: var(--muted-foreground); }
+.main[data-page]:not([data-page="home"]) .grid{ display: none; }
+.main[data-page]:not([data-page="home"]) .page-only{ display: block; }
+
+/* ---- Compact tile (~439x329) + narrow iframe: prioritize temp/PTC/state/graph/Stop. ---- */
+@container (max-width: 600px){
+  .shell{ grid-template: 39px minmax(0,1fr) / 43px minmax(0,1fr); }
+  .topbar{ padding: 0 7px; }
+  .brand span, .connection span{ display: none; }
+  .rail{ padding: 5px 3px; gap: 2px; }
+  .tab{ width: 34px; height: 34px; }
+  .main{ padding: 8px; }
+  .heading{ margin-bottom: 7px; }
+  .heading h2{ font-size: 15px; }
+  .grid{ height: calc(100% - 28px); grid-template-columns: 1fr 1fr; grid-template-rows: 1fr; gap: 7px; }
+  .card{ padding: 8px; }
+  .chamber-reading strong{ font-size: 27px; }
+  .ptc-reading strong{ font-size: 14px; }
+  .quick-card{ display: none; }        /* secondary controls hidden when compact */
+  .summary{ font-size: 11px; }
+  .ptc-reading, .target{ display: none; }
+  .page-only{ height: calc(100% - 28px); padding: 10px; }
+  .page-only > p{ display: none; }
+}
+</style>
+</head>
+<body>
+<!-- Inline icon sprite (lucide-derived). Fully self-contained: no CDN, no web fonts. -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-house" viewBox="0 0 24 24"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M9 22V12h6v10"/></symbol>
+  <symbol id="i-flame" viewBox="0 0 24 24"><path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.07-2.14-.22-4.05 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.15.43-2.29 1-3a2.5 2.5 0 0 0 2.5 2.5z"/></symbol>
+  <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M21 21v-5h-5"/></symbol>
+  <symbol id="i-wind" viewBox="0 0 24 24"><path d="M12.8 19.6A2 2 0 1 0 14 16H2"/><path d="M17.5 8A2.5 2.5 0 1 1 19.5 12H2"/><path d="M9.8 4.4A2 2 0 1 1 11 8H2"/></symbol>
+  <symbol id="i-settings" viewBox="0 0 24 24"><path d="M20 7h-9"/><path d="M14 17H5"/><circle cx="17" cy="17" r="3"/><circle cx="7" cy="7" r="3"/></symbol>
+  <symbol id="i-thermometer" viewBox="0 0 24 24"><path d="M14 4v10.54a4 4 0 1 1-4 0V4a2 2 0 0 1 4 0z"/></symbol>
+  <symbol id="i-power" viewBox="0 0 24 24"><path d="M12 2v10"/><path d="M18.4 6.6a9 9 0 1 1-12.8 0"/></symbol>
+</svg>
+
+<div class="app" data-state="off" data-online="0">
+  <div class="shell">
+    <header class="topbar">
+      <div class="brand" id="brand" title="DragonBreath">
+        <svg viewBox="0 0 32 32" role="img" aria-label="DragonBreath logo" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round">
+          <path d="M6 5h8c8 0 12 4 12 11S22 27 14 27H6z"/>
+          <path d="M11 11h7M11 16h10M11 21h7"/>
+        </svg>
+        <span>DragonBreath</span>
+      </div>
+      <div class="connection" aria-label="Connection"><i class="dot"></i><span id="db-conn">Connecting…</span></div>
+    </header>
+
+    <nav class="rail" aria-label="Primary navigation">
+      <button class="tab" type="button" data-page="home" aria-selected="true" aria-label="Dashboard"><svg class="icon"><use href="#i-house"/></svg></button>
+      <button class="tab" type="button" data-page="manual" aria-selected="false" aria-label="Manual heat"><svg class="icon"><use href="#i-flame"/></svg></button>
+      <button class="tab" type="button" data-page="auto" aria-selected="false" aria-label="Automatic mode"><svg class="icon"><use href="#i-refresh"/></svg></button>
+      <button class="tab" type="button" data-page="dry" aria-selected="false" aria-label="Dry cycle"><svg class="icon"><use href="#i-wind"/></svg></button>
+      <button class="tab" type="button" data-page="settings" aria-selected="false" aria-label="Settings"><svg class="icon"><use href="#i-settings"/></svg></button>
+    </nav>
+
+    <main class="main" data-page="home">
+      <div class="heading">
+        <h2 id="db-title">Dashboard</h2>
+        <span class="mode" id="db-mode">--</span>
+      </div>
+
+      <!-- Dashboard (home). Live-bound to /api/v2/state + /api/v2/events. -->
+      <div class="grid">
+        <section class="card">
+          <h3>Chamber temperature</h3>
+          <svg class="temp-chart" viewBox="0 0 320 120" preserveAspectRatio="none" role="img" aria-label="Chamber temperature trend">
+            <path class="gridline" d="M0 30H320M0 70H320M0 110H320"/>
+            <path class="area" id="db-area" d=""/>
+            <path class="line" id="db-trend" d=""/>
+          </svg>
+          <div class="temperature">
+            <div class="chamber-reading"><strong id="db-temp">--</strong><span>°C</span></div>
+            <div class="ptc-reading"><span>PTC</span><strong id="db-ptc">--</strong></div>
+          </div>
+          <div class="bar"><span id="db-progress"></span></div>
+          <div class="target">Target <strong id="db-target">--</strong></div>
+        </section>
+
+        <section class="card status-card">
+          <h3>System status</h3>
+          <div class="state"><i class="state-light"></i><span id="db-status">--</span></div>
+          <div class="summary" id="db-summary"></div>
+          <div class="actions">
+            <button class="btn btn-primary btn-sm" type="button" id="db-stop" disabled><svg class="icon"><use href="#i-power"/></svg> Stop</button>
+          </div>
+        </section>
+
+        <section class="card quick-card">
+          <h3>Quick controls</h3>
+          <div class="quick-actions">
+            <button class="btn" type="button" data-quick-temp="40"><svg class="icon"><use href="#i-thermometer"/></svg> 40 °C</button>
+            <button class="btn" type="button" data-quick-temp="50"><svg class="icon"><use href="#i-thermometer"/></svg> 50 °C</button>
+            <button class="btn" type="button" data-quick-temp="60"><svg class="icon"><use href="#i-thermometer"/></svg> 60 °C</button>
+            <button class="btn" type="button" data-quick-temp="70"><svg class="icon"><use href="#i-thermometer"/></svg> 70 °C</button>
+          </div>
+        </section>
+      </div>
+
+      <!-- Stub screens for Manual / Automatic / Dry / Settings. Routable now;
+           wired to the control surface in phases U2 (manual/auto/dry) and U3-U4
+           (settings). Kept intentionally minimal. -->
+      <section class="page-only">
+        <h3 id="db-page-heading">Manual heat</h3>
+        <p id="db-page-copy"></p>
+        <p class="stub-note" id="db-stub-note">This screen arrives in a later update. Use the Dashboard quick presets to heat now.</p>
+      </section>
+    </main>
+  </div>
+</div>
+
+<script>
+(function(){
+  var app = document.querySelector('.app');
+  var $ = function(id){ return document.getElementById(id); };
+  function u(id, v){ var e=$(id); if(e) e.textContent = v; }
+  function deg(v){ return v==null ? '--' : Number(v).toFixed(1)+'°C'; }
+
+  /* ---- Auth: reuse the X-DragonBreath-Auth token flow. Self-contained page, so
+     nothing is injected server-side: default to the "web" CSRF sentinel (accepted
+     when no control token is configured); if a token IS configured the server 403s,
+     we drop the sentinel and prompt for the real token, cached in localStorage. ---- */
+  function tok(){ return localStorage.getItem('db_tok') || 'web'; }
+  function hdr(){ return { 'X-DragonBreath-Auth': tok(), 'Content-Type': 'application/json' }; }
+
+  var rev = 0, lease = null, last = null;
+  var actor = sessionStorage.getItem('db_actor');
+  if(!actor){ actor = 'web-'+Math.random().toString(16).slice(2); sessionStorage.setItem('db_actor', actor); }
+  function rid(){ return (self.crypto && crypto.randomUUID) ? crypto.randomUUID() : Date.now()+'-'+Math.random(); }
+
+  /* ---- Temperature trend: client-side ring buffer of chamber samples from the
+     2 s telemetry (cap 120 ~ 4 min), rendered into the SVG area chart. ---- */
+  var buf = [];
+  function pushTemp(t){ if(t==null || !isFinite(t)) return; buf.push(t); if(buf.length>120) buf.shift(); drawTrend(); }
+  function drawTrend(){
+    var W=320,H=120, line=$('db-trend'), area=$('db-area');
+    if(buf.length<2){ line.setAttribute('d',''); area.setAttribute('d',''); return; }
+    var min=Math.min.apply(null,buf), max=Math.max.apply(null,buf);
+    if(max-min<1) max=min+1;
+    var pad=(max-min)*0.15; min-=pad; max+=pad;
+    var n=buf.length, d='';
+    for(var i=0;i<n;i++){
+      var x=(i/(n-1))*W, y=H-((buf[i]-min)/(max-min))*H;
+      d += (i?'L':'M')+x.toFixed(1)+' '+y.toFixed(1);
+    }
+    line.setAttribute('d', d);
+    area.setAttribute('d', d+'L'+W+' '+H+'L0 '+H+'Z');
+  }
+
+  /* ---- Map a snapshot to a display state (drives the status light + labels). ---- */
+  function displayState(s){
+    if(s.safety.fault_latched || s.safety.inhibited) return 'fault';
+    if(s.mode==='drying') return 'drying';
+    if(s.mode==='auto' && !s.environment.auto_engaged) return 'waiting';
+    if(s.heater.output || s.heater.demand) return 'heating';
+    return 'off';
+  }
+  function statusLabel(st, s){
+    if(st==='fault') return s.safety.inhibited ? 'Inhibited' : 'Fault';
+    if(st==='drying') return 'Dry cycle';
+    if(st==='waiting') return 'Waiting';
+    if(st==='heating') return 'Heating';
+    return 'Idle';
+  }
+  function modeLabel(m){
+    return m==='power_on' ? 'Manual' : m==='auto' ? 'Auto' : m==='drying' ? 'Dry' : 'Idle';
+  }
+  function summary(st, s){
+    if(st==='fault') return (s.safety.inhibited?'Inhibited: ':'Fault: ')+(s.safety.reason||'unknown');
+    if(st==='drying'){ var m=Math.round((s.drying.remaining_seconds||0)/60); return 'Filament drying — '+m+' min left. Safety chain healthy.'; }
+    if(st==='waiting') return 'Armed. Waiting for the printer bed threshold.';
+    if(st==='heating') return s.heater.output ? 'Output active. Safety chain healthy.' : 'Heater demand — waiting on the safety chain.';
+    return 'Heater disabled. Monitoring remains active.';
+  }
+
+  function setConn(online){ app.setAttribute('data-online', online?'1':'0'); u('db-conn', online?'Online':'Offline'); }
+
+  function apply(s){
+    if(!s || s.api_version!==2) return;
+    if(last && s.boot_id===last.boot_id && s.state_revision<rev) return;
+    if(last && s.boot_id!==last.boot_id) lease=null;   // device rebooted -> our lease is gone
+    last=s; rev=s.state_revision;
+
+    var c=s.sensors.chamber, p=s.sensors.ptc, l=s.control.lease;
+    u('db-temp', c.temperature_c==null ? '--' : Number(c.temperature_c).toFixed(1));
+    u('db-ptc', deg(p.temperature_c)+(p.status==='ok'?'':' ('+p.status+')'));
+    u('db-target', s.target.effective_c>0 ? Math.round(s.target.effective_c)+' °C' : 'Off');
+    u('db-mode', modeLabel(s.mode));
+
+    var st = displayState(s);
+    app.setAttribute('data-state', st);
+    u('db-status', statusLabel(st, s));
+    u('db-summary', summary(st, s));
+
+    /* progress bar: chamber vs. effective target */
+    var pct=0;
+    if(s.target.effective_c>0 && c.temperature_c!=null)
+      pct = Math.max(0, Math.min(100, (c.temperature_c/s.target.effective_c)*100));
+    $('db-progress').style.width = pct.toFixed(0)+'%';
+
+    pushTemp(c.status==='ok' ? c.temperature_c : null);
+
+    /* Stop enabled only while a mode is running. */
+    $('db-stop').disabled = s.mode==='off';
+
+    /* Drop our lease if it is no longer the active POWER_ON lease we own. */
+    if(!l.active || !lease || l.owner!==actor) lease=null;
+
+    setConn(true);
+  }
+
+  /* ---- Commands (auth-gated mutations). ---- */
+  function request(path, body){
+    return fetch(path, {method:'POST', headers:hdr(), body:JSON.stringify(body)}).then(function(r){
+      return r.json().catch(function(){return {};}).then(function(j){
+        if(r.status===403){ localStorage.removeItem('db_tok');
+          var t=prompt('DragonBreath control token'); if(t) localStorage.setItem('db_tok', t); }
+        if(j.state) apply(j.state);
+        if(!r.ok) throw j;
+        return j;
+      });
+    });
+  }
+  function command(name, fields){
+    var b={api_version:2, request_id:rid(), expected_revision:rev, actor:{kind:'web', id:actor}, command:{name:name}};
+    Object.keys(fields||{}).forEach(function(k){ b.command[k]=fields[k]; });
+    return request('/api/v2/command', b);
+  }
+  function powerOn(t){
+    lease=null;
+    command('power_on', {target_c:t}).then(function(r){ lease=r.lease_id||null; }).catch(function(){ lease=null; });
+  }
+  function setOff(){ lease=null; command('off', {}).catch(function(){}); }
+
+  /* Heartbeat only the exact POWER_ON lease this tab created (never a passive one). */
+  function heartbeat(){
+    if(!lease || !last || last.mode!=='power_on') return;
+    request('/api/v2/heartbeat', {api_version:2, lease_id:lease}).catch(function(){ lease=null; });
+  }
+
+  /* ---- Live data: initial GET /state, then SSE, with a serialized poll fallback. ---- */
+  var polling=false, pollDelay=2000;
+  function poll(){
+    if(polling) return; polling=true;
+    fetch('/api/v2/state', {cache:'no-store'})
+      .then(function(r){ if(!r.ok) throw 0; return r.json(); })
+      .then(function(s){ apply(s); pollDelay=2000; })
+      .catch(function(){ setConn(false); pollDelay=Math.min(10000, Math.round(pollDelay*1.6)); })
+      .finally(function(){ polling=false; setTimeout(poll, pollDelay+Math.random()*250); });
+  }
+  function events(){
+    var es=new EventSource('/api/v2/events'), seen=false;
+    function ev(e){ seen=true; try{ apply(JSON.parse(e.data)); }catch(_){} }
+    es.addEventListener('state', ev);
+    es.addEventListener('telemetry', ev);
+    es.onerror=function(){ es.close(); setConn(false); if(!seen) poll(); else setTimeout(poll,1000); };
+  }
+
+  /* ---- Navigation: rail tabs. Home = live Dashboard; others are U2-U4 stubs. ---- */
+  var pages={
+    home:    {title:'Dashboard'},
+    manual:  {title:'Manual heat',    copy:'Set a chamber target and control heater output directly.'},
+    auto:    {title:'Automatic mode', copy:'Follow printer activity using a bed-temperature threshold.'},
+    dry:     {title:'Dry cycle',      copy:'Run a timed filament-drying cycle at a chosen temperature.'},
+    settings:{title:'Settings',       copy:'Network, sensor calibration, safety limits, LEDs, integrations, logs, and firmware updates.'}
+  };
+  document.querySelectorAll('.tab').forEach(function(tab){
+    tab.addEventListener('click', function(){
+      var page=tab.dataset.page, cfg=pages[page];
+      $('db-title').textContent = cfg.title;
+      document.querySelector('.main').dataset.page = page;
+      document.querySelectorAll('.tab').forEach(function(t){ t.setAttribute('aria-selected', String(t===tab)); });
+      if(page!=='home'){
+        $('db-page-heading').textContent = cfg.title;
+        $('db-page-copy').textContent = cfg.copy;
+      }
+    });
+  });
+
+  /* Quick presets -> power_on at the chosen target. */
+  document.querySelectorAll('[data-quick-temp]').forEach(function(b){
+    b.addEventListener('click', function(){ powerOn(Number(b.dataset.quickTemp)); });
+  });
+
+  /* Status-area action: Stop -> off (the policy has no pause state; per #19 the
+     status area is Stop-only). */
+  $('db-stop').addEventListener('click', setOff);
+
+  /* Firmware version in the brand tooltip (device info; no server-side injection). */
+  fetch('/api/v2/info').then(function(r){ return r.json(); }).then(function(i){
+    if(i && i.firmware){ $('brand').title = 'DragonBreath '+i.firmware; $('db-stub-note').textContent += ' (firmware '+i.firmware+')'; }
+  }).catch(function(){});
+
+  fetch('/api/v2/state', {cache:'no-store'})
+    .then(function(r){ return r.ok ? r.json() : null; })
+    .then(function(s){ if(s) apply(s); })
+    .catch(function(){})
+    .finally(events);
+  setInterval(heartbeat, 30000);
+})();
+</script>
+</body>
+</html>

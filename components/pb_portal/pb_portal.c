@@ -18,6 +18,12 @@
 
 static const char *TAG = "pb_portal";
 #define NVS_NS "app_nvs"
+
+// STA-mode dashboard: the gzip of components/pb_portal/www/app.html, embedded
+// into flash rodata at build time (see CMakeLists.txt target_add_binary_data).
+// Served verbatim as a single Content-Encoding: gzip response.
+extern const uint8_t app_html_gz_start[] asm("_binary_app_html_gz_start");
+extern const uint8_t app_html_gz_end[]   asm("_binary_app_html_gz_end");
 // Non-empty guard: httpd_resp_send_chunk() with a 0-length string terminates
 // the chunked response early, so we must never send an empty chunk.
 #define SEND(req, s) do { const char *_s = (s); if (_s && _s[0]) httpd_resp_send_chunk((req), _s, HTTPD_RESP_USE_STRLEN); } while (0)
@@ -148,160 +154,6 @@ static const char CONFIG_WIFI[] =
     "<button type=button id=eye onclick='togglePw()' aria-label='show password'>\xF0\x9F\x91\x81</button></div>"
     "<button type=button class=sec onclick='rescan()'>Rescan networks</button></div>";
 
-// Live status dashboard (STA root). API v2 state arrives over SSE; a serialized,
-// backoff-controlled poll is used only when an event stream cannot be held.
-// This tab heartbeats only the exact lease returned by its own POWER_ON command.
-static const char STATUS_BODY[] =
-    "<div id=fault class=card style='display:none;background:#5a1f1f;color:#ffd7d7'></div>"
-    "<div class=card style='text-align:center'>"
-    "<div style='font-size:.8rem;color:#bdbdbd'>Chamber</div>"
-    "<div id=temp style='font-size:3rem;font-weight:700;color:var(--accent);line-height:1.15'>--</div>"
-    "<div id=cstat style='font-size:.75rem;color:#8a8a8a'></div></div>"
-    "<div class=card>"
-    "<div class=srow><span>Mode</span><b id=mode>--</b></div>"
-    "<div class=srow><span>Target</span><b id=target>--</b></div>"
-    "<div class=srow><span>Heating</span><b id=heating>--</b></div>"
-    "<div class=srow><span>Fan</span><b id=fan>--</b></div>"
-    "<div class=srow><span>Element (PTC)</span><b id=ptc>--</b></div>"
-    "<div class=srow><span>Controller</span><b id=owner>--</b></div>"
-    "<div class=srow><span>Link</span><b id=link>--</b></div></div>"
-    "<div class=card><h2>Manual heat</h2><label>Chamber target (&deg;C)</label>"
-    "<div class=pw><input id=tin type=number min=30 step=1 value=50>"
-    "<button type=button class=go style='width:auto;margin:0;padding:12px 18px' onclick='powerOn()'>Start</button></div>"
-    "<button type=button id=off class=sec onclick='setOff()' disabled>Turn heater off</button>"
-    "<button type=button class=sec id=rst style='display:none' onclick='doReset()'>Clear fault</button></div>"
-    "<div class=card><h2>Automatic</h2><label>Chamber target (&deg;C)</label>"
-    "<input id=atin type=number min=30 step=1 value=60>"
-    "<label>Bed threshold (&deg;C)</label>"
-    "<input id=bed type=number min=40 max=120 step=1 value=100>"
-    "<button type=button id=autobtn class=sec aria-pressed=false onclick='setAuto()'>Follow printer bed</button>"
-    "<div id=amsg class=msg></div></div>"
-    "<div class=card><h2>Filament drying</h2><label>Chamber target (&deg;C)</label>"
-    "<input id=dtin type=number min=30 step=1 value=60>"
-    "<label>Duration (hours)</label>"
-    "<input id=hours type=number min=1 max=12 step=1 value=12>"
-    "<button type=button id=drybtn class=sec aria-pressed=false onclick='dryStart()'>Start drying</button>"
-    "<button type=button id=drystop class=sec onclick='dryStop()' disabled>Stop drying</button>"
-    "<div id=dmsg class=msg></div></div>"
-    "<div class=card><h2>Advanced / Safety</h2>"
-    "<label>Max target ceiling (&deg;C)</label><input id=smax type=number step=1>"
-    "<label>Comms watchdog (s) &mdash; heater latches off if the controller goes silent</label>"
-    "<input id=scomms type=number step=1>"
-    "<button type=button class=go style='margin-top:10px' onclick='saveSettings()'>Save settings</button>"
-    "<div id=smsg style='margin-top:.5em'></div></div>"
-    "<p style='text-align:center'><small><a href='/setup'>Wi-Fi / printer setup</a>"
-    " &middot; <a href='/fw'>Firmware update</a></small></p>"
-    "<p style='text-align:center;margin-top:-6px'><small style='color:#6f6f6f'>"
-    "Firmware update installs <b>DragonBreath</b> updates only \xE2\x80\x94 it does <b>not</b> "
-    "restore the stock Panda firmware.</small></p>"
-    "<div id=ver style='text-align:center;color:#5a5a5a;font-size:.72rem;margin-top:2px'></div></div>"
-    "<script>" DB_AUTH_JS
-    "if(window.DB_VER)document.getElementById('ver').textContent='DragonBreath '+window.DB_VER;"
-    "var rev=0,lease=null,last=null,polling=false,pollDelay=2000;"
-    "var actor=sessionStorage.getItem('db_actor');"
-    "if(!actor){actor='web-'+Math.random().toString(16).slice(2);sessionStorage.setItem('db_actor',actor);}"
-    "function rid(){return self.crypto&&crypto.randomUUID?crypto.randomUUID():Date.now()+'-'+Math.random();}"
-    "function u(i,v){document.getElementById(i).textContent=v;}"
-    "function note(i,v,bad){var e=document.getElementById(i);e.textContent=v||'';e.className=bad?'msg bad':'msg';}"
-    "function errText(e){return(e&&(e.message||e.error))||'request failed';}"
-    "function deg(v){return v==null?'--':Number(v).toFixed(1)+'\\u00b0C';}"
-    "function apply(s){if(!s||s.api_version!==2)return;"
-    "if(last&&s.boot_id===last.boot_id&&s.state_revision<rev)return;"
-    "if(last&&s.boot_id!==last.boot_id)lease=null;last=s;rev=s.state_revision;"
-    "var c=s.sensors.chamber,p=s.sensors.ptc,l=s.control.lease;"
-    "u('temp',deg(c.temperature_c));u('cstat',c.status==='ok'?'':'sensor: '+c.status);"
-    "u('ptc',deg(p.temperature_c)+(p.status==='ok'?'':' ('+p.status+')'));"
-    "u('mode',s.mode);u('target',s.target.effective_c>0?deg(s.target.effective_c):'off');"
-    "u('heating',s.heater.output?'ON':(s.heater.demand?'waiting':'off'));"
-    "u('fan',s.fan.effective_percent+'% ('+s.fan.reason+')');"
-    "u('owner',l.active?(l.owner||'remote'):(s.source||'--'));"
-    "u('link',s.environment.moonraker_connected?'Moonraker online':'Moonraker offline');"
-    "var tin=document.getElementById('tin'),atin=document.getElementById('atin'),dtin=document.getElementById('dtin');"
-    "if(s.target.maximum_c!=null){tin.max=atin.max=dtin.max=Math.round(s.target.maximum_c);}"
-    "if(s.params){var pv=[[tin,s.params.manual_target_c],[atin,s.params.auto_target_c],"
-    "[document.getElementById('bed'),s.params.auto_bed_threshold_c],"
-    "[dtin,s.params.dry_target_c],[document.getElementById('hours'),s.params.dry_hours]];"
-    "pv.forEach(function(x){if(x[1]!=null&&document.activeElement!==x[0])x[0].value=Math.round(x[1]);});}"
-    "if(s.target.requested_c>0){var ti=s.mode==='auto'?atin:(s.mode==='drying'?dtin:tin);"
-    "if(document.activeElement!==ti)ti.value=Math.round(s.target.requested_c);}"
-    "var ob=document.getElementById('off'),on=s.mode!=='off';ob.disabled=!on;"
-    "ob.style.background=on?'var(--accent)':'';ob.style.color=on?'#fff':'';ob.style.borderColor=on?'var(--accent)':'';"
-    "var ab=document.getElementById('autobtn'),db=document.getElementById('drybtn'),ds=document.getElementById('drystop');"
-    "ab.className=s.mode==='auto'?'sec active':'sec';ab.setAttribute('aria-pressed',s.mode==='auto');"
-    "db.className=s.mode==='drying'?'sec active':'sec';db.setAttribute('aria-pressed',s.mode==='drying');"
-    "ds.disabled=s.mode!=='drying';"
-    "var am=document.getElementById('amsg');"
-    "if(s.mode==='auto'){am.setAttribute('data-live','auto');"
-    "note('amsg',s.environment.auto_engaged?'Automatic active.':'Automatic armed; waiting for bed threshold.');}"
-    "else if(am.getAttribute('data-live')==='auto'){am.removeAttribute('data-live');note('amsg','');}"
-    "var f=document.getElementById('fault'),rb=document.getElementById('rst');"
-    "if(s.safety.fault_latched||s.safety.inhibited){f.style.display='block';"
-    "f.textContent='\\u26a0 '+(s.safety.inhibited?'Inhibited: ':'Fault: ')+(s.safety.reason||'unknown');"
-    "rb.style.display=s.safety.inhibited?'none':'block';}"
-    "else{f.style.display='none';rb.style.display='none';}"
-    // A passive/reloaded tab has lease=null. If another controller supersedes
-    // our lease, the next authoritative snapshot immediately stops heartbeats.
-    "if(!l.active||!lease||l.owner!==actor)lease=null;"
-    "}"
-    "function request(path,body){var h=hdr();h['Content-Type']='application/json';"
-    "return fetch(path,{method:'POST',headers:h,body:JSON.stringify(body)}).then(function(r){"
-    "return r.json().catch(function(){return{};}).then(function(j){"
-    "if(r.status===403){localStorage.removeItem('db_tok');alert('Control token rejected.');}"
-    "if(j.state)apply(j.state);if(!r.ok)throw j;return j;});});}"
-    "function command(name,fields){var b={api_version:2,request_id:rid(),expected_revision:rev,"
-    "actor:{kind:'web',id:actor},command:{name:name}};"
-    "Object.keys(fields||{}).forEach(function(k){b.command[k]=fields[k];});"
-    "return request('/api/v2/command',b);}"
-    "function powerOn(){lease=null;command('power_on',{target_c:+document.getElementById('tin').value})"
-    ".then(function(r){lease=r.lease_id||null;if(r.state)apply(r.state);})"
-    ".catch(function(){lease=null;});}"
-    "function setOff(){lease=null;command('off',{}).catch(function(){});}"
-    "function setAuto(){lease=null;note('amsg','Sending\\u2026');"
-    "command('auto',{target_c:+document.getElementById('atin').value,"
-    "bed_threshold_c:+document.getElementById('bed').value})"
-    ".catch(function(e){note('amsg','Rejected: '+errText(e),true);});}"
-    "function dryStart(){lease=null;note('dmsg','Sending\\u2026');"
-    "command('drying_start',{target_c:+document.getElementById('dtin').value,"
-    "hours:+document.getElementById('hours').value})"
-    ".then(function(){note('dmsg','Drying started.');})"
-    ".catch(function(e){note('dmsg','Rejected: '+errText(e),true);});}"
-    "function dryStop(){lease=null;note('dmsg','Sending\\u2026');command('drying_stop',{})"
-    ".then(function(){note('dmsg','Drying stopped.');})"
-    ".catch(function(e){note('dmsg','Rejected: '+errText(e),true);});}"
-    "function doReset(){lease=null;command('clear_fault',{}).catch(function(){});}"
-    "function heartbeat(){if(!lease||!last||last.mode!=='power_on')return;"
-    "request('/api/v2/heartbeat',{api_version:2,lease_id:lease}).catch(function(){lease=null;});}"
-    // Polling fallback is serialized: schedule the next request only after the
-    // current request settles, with bounded backoff on failure.
-    "function poll(){if(polling)return;polling=true;fetch('/api/v2/state',{cache:'no-store'})"
-    ".then(function(r){if(!r.ok)throw 0;return r.json();}).then(function(s){apply(s);pollDelay=2000;})"
-    ".catch(function(){pollDelay=Math.min(10000,Math.round(pollDelay*1.6));})"
-    ".finally(function(){polling=false;setTimeout(poll,pollDelay+Math.random()*250);});}"
-    "function events(){var es=new EventSource('/api/v2/events');var seen=false;"
-    "function ev(e){seen=true;try{apply(JSON.parse(e.data));}catch(_){}}"
-    "es.addEventListener('state',ev);es.addEventListener('telemetry',ev);"
-    "es.onerror=function(){es.close();if(!seen)poll();else setTimeout(poll,1000);};}"
-    // Advanced/Safety remains the persisted configuration surface until a
-    // dedicated v2 settings route is introduced.
-    "function loadSettings(){fetch('/settings').then(function(r){return r.json();}).then(function(s){"
-    "var mx=document.getElementById('smax');mx.min=s.max_min;mx.max=s.max_abs;"
-    "if(document.activeElement!==mx)mx.value=Math.round(s.max);"
-    "var cm=document.getElementById('scomms');cm.min=Math.round(s.comms_ms_min/1000);cm.max=Math.round(s.comms_ms_max/1000);"
-    "if(document.activeElement!==cm)cm.value=Math.round(s.comms_ms/1000);"
-    "}).catch(function(){});}"
-    "function saveSettings(){var mx=document.getElementById('smax').value;"
-    "var cm=Math.round(parseFloat(document.getElementById('scomms').value)*1000);"
-    "var m=document.getElementById('smsg');"
-    "post('/settings?max='+encodeURIComponent(mx)+'&comms_ms='+encodeURIComponent(cm))"
-    ".then(function(r){return r.json().then(function(j){return{s:r.status,j:j};})"
-    ".catch(function(){return{s:r.status,j:{}};});})"
-    ".then(function(x){if(x.s==200){m.innerHTML='<small>Saved \\u2713 (max '+x.j.max+'\\u00b0C, timeout '"
-    "+Math.round(x.j.comms_ms/1000)+'s)</small>';loadSettings();}"
-    "else{m.innerHTML='<small>Save failed: '+((x.j&&x.j.error)||('HTTP '+x.s))+'</small>';}})"
-    ".catch(function(){m.innerHTML='<small>Save failed (connection).</small>';});}"
-    "events();setInterval(heartbeat,30000);loadSettings();"
-    "</script></body></html>";
-
 // Dedicated firmware-update page (GET /fw) — DragonBreath OTA only, its own page so
 // it isn't mixed in with Wi-Fi/printer setup.
 static const char FW_BODY[] =
@@ -414,15 +266,17 @@ static void send_version_inject(httpd_req_t *req)
 }
 
 // ---- handlers ----
-// Live status dashboard (root in STA mode).
-static esp_err_t status_page(httpd_req_t *req)
+// Live dashboard SPA (root in STA mode). The embedded gzip of www/app.html is
+// sent verbatim as a single Content-Encoding: gzip response — the whole shell +
+// Dashboard, self-contained (inline icons/CSS/JS, no external requests). It binds
+// itself to the v2 API at runtime (GET /api/v2/state + /api/v2/events); nothing is
+// templated server-side.
+static esp_err_t app_page(httpd_req_t *req)
 {
+    const size_t len = (size_t)(app_html_gz_end - app_html_gz_start);
     httpd_resp_set_type(req, "text/html; charset=utf-8");
-    SEND(req, PAGE_HEAD);
-    send_auth_inject(req);
-    send_version_inject(req);
-    SEND(req, STATUS_BODY);
-    return httpd_resp_send_chunk(req, NULL, 0);
+    httpd_resp_set_hdr(req, "Content-Encoding", "gzip");
+    return httpd_resp_send(req, (const char *)app_html_gz_start, len);
 }
 
 // Dedicated firmware-update page (GET /fw).
@@ -472,11 +326,11 @@ static esp_err_t config_page(httpd_req_t *req)
 }
 
 // Catch-all root: in AP mode serve the config page so captive-portal probes land
-// on setup; in STA mode serve the live status dashboard.
+// on setup; in STA mode serve the live dashboard SPA.
 static esp_err_t root_page(httpd_req_t *req)
 {
     if (pv_wifi_state() == PV_WIFI_STATE_AP_PORTAL) return config_page(req);
-    return status_page(req);
+    return app_page(req);
 }
 
 static esp_err_t scan_json(httpd_req_t *req)
