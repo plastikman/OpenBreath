@@ -464,29 +464,17 @@ void pb_heater_tick(void)          // control-task context; sole writer of s_on
     pb_ntc_status_t ps = pb_ntc_read(PB_NTC_PTC, &ptc_c);
     pb_ntc_status_t cs = pb_ntc_read(PB_NTC_CHAMBER, &chamber_c);
 
-    // Over-temp cutoffs — unconditional whenever the sensor reads valid.
-    if (ps == PB_NTC_OK && ptc_c >= PB_HEATER_PTC_CUTOFF_C) {
-        trip(PB_FAULT_PTC_OVERTEMP);
-        return;
-    }
-    if (cs == PB_NTC_OK && chamber_c >= PB_HEATER_CHAMBER_MAX_C) {
-        trip(PB_FAULT_CHAMBER_OVERTEMP);
-        return;
-    }
-    // While armed, EITHER thermistor being anything other than OK — OPEN, SHORT,
-    // or a UNINIT read error — is fail-closed. A blind heater (dead chamber
-    // sensor) or an unmonitored element (dead PTC sensor) must latch off.
-    if (armed && cs != PB_NTC_OK) {
-        trip(PB_FAULT_CHAMBER_SENSOR);
-        return;
-    }
-    if (armed && ps != PB_NTC_OK) {
-        trip(PB_FAULT_PTC_SENSOR);
-        return;
-    }
-    // Comms-loss watchdog (only while trying to heat).
-    if (armed && (esp_timer_get_time() - last_link) > comms_timeout_us) {
-        trip(PB_FAULT_LINK_LOST);
+    // All safety trips (over-temp cutoffs, fail-closed sensor faults, comms-loss
+    // watchdog) are decided by the pure, host-tested pb_heater_eval_trip() so the
+    // load-bearing priority ordering has one authoritative definition. Over-temp is
+    // trusted only on a valid sensor; while armed, EITHER thermistor being anything
+    // other than OK — OPEN, SHORT, or a UNINIT read error — is fail-closed (a blind
+    // heater or unmonitored element must latch off), as is a comms deadman timeout.
+    pb_fault_reason_t trip_code = pb_heater_eval_trip(
+        ps == PB_NTC_OK, ptc_c, cs == PB_NTC_OK, chamber_c, armed,
+        (esp_timer_get_time() - last_link) > comms_timeout_us);
+    if (trip_code != PB_FAULT_NONE) {
+        trip(trip_code);
         return;
     }
 

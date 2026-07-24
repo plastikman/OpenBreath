@@ -23,6 +23,30 @@ typedef enum {
     PB_NTC_PTC = 1,
 } pb_ntc_channel_t;
 
+// Raw-count + rail-range fault thresholds (from the stock classifier fcn.4200ca8e;
+// Vsupply hardware-confirmed ~3.3 V). Kept in the header so the pure classifier
+// below and the ADC read path share one definition — the same ladder that decides
+// OPEN / SHORT is the one that gets unit-tested.
+#define PB_NTC_VSUPPLY_V      3.3f
+#define PB_NTC_RAW_OPEN_MAX   0xFFD   // raw > this  => open / over-range
+#define PB_NTC_RAW_SHORT_MIN  0x14    // raw <= this => short / under-range
+
+// Pure raw-sample -> fault-status classifier, inline so the open/short/rail-range
+// mapping is host-testable without the ADC backend. `raw` is the 12-bit ADC count;
+// `v` is the calibrated pin voltage. Returns PB_NTC_OPEN (thermistor disconnected /
+// over-range, or the rail pinned high/low) or PB_NTC_SHORT (under-range) for a bad
+// sample, else PB_NTC_OK (the caller then converts `v` to °C). This is the EXACT
+// ladder pb_ntc_read() applies to a successful ADC+cali sample; PB_NTC_UNINIT
+// (init / ADC-read / calibration failure) is handled separately in the read path
+// and is not a sample-classification outcome.
+static inline pb_ntc_status_t pb_ntc_classify(int raw, float v)
+{
+    if (raw > PB_NTC_RAW_OPEN_MAX)          return PB_NTC_OPEN;
+    if (raw <= PB_NTC_RAW_SHORT_MIN)        return PB_NTC_SHORT;
+    if (v <= 0.0f || v >= PB_NTC_VSUPPLY_V) return PB_NTC_OPEN;
+    return PB_NTC_OK;
+}
+
 // Initialize ADC1 oneshot + curve-fit calibration for both channels and latch
 // Rref from the board strap. Returns ESP_OK on success.
 esp_err_t pb_ntc_init(void);

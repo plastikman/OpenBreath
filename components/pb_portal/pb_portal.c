@@ -22,6 +22,8 @@ static const char *TAG = "pb_portal";
 // STA-mode dashboard: the gzip of components/pb_portal/www/app.html, embedded
 // into flash rodata at build time (see CMakeLists.txt target_add_binary_data).
 // Served verbatim as a single Content-Encoding: gzip response.
+// cppcheck-suppress syntaxError  // GNU asm() label on an extern decl (embedded
+// binary symbol) is valid GCC; cppcheck's C parser does not model it.
 extern const uint8_t app_html_gz_start[] asm("_binary_app_html_gz_start");
 extern const uint8_t app_html_gz_end[]   asm("_binary_app_html_gz_end");
 // 32x32 PNG of the DragonBreath dragon mark, embedded from www/favicon.png (see
@@ -289,6 +291,9 @@ static void send_version_inject(httpd_req_t *req)
 // templated server-side.
 static esp_err_t app_page(httpd_req_t *req)
 {
+    // start/end are the linker-provided bounds of ONE embedded blob
+    // (target_add_binary_data), so end-start is its length — not UB.
+    // cppcheck-suppress comparePointers
     const size_t len = (size_t)(app_html_gz_end - app_html_gz_start);
     httpd_resp_set_type(req, "text/html; charset=utf-8");
     httpd_resp_set_hdr(req, "Content-Encoding", "gzip");
@@ -348,6 +353,9 @@ static esp_err_t config_page(httpd_req_t *req)
 // browsers that honor it; this PNG is the universal fallback.
 static esp_err_t favicon_ico(httpd_req_t *req)
 {
+    // start/end are the linker-provided bounds of ONE embedded blob
+    // (target_add_binary_data), so end-start is its length — not UB.
+    // cppcheck-suppress comparePointers
     const size_t len = (size_t)(favicon_png_end - favicon_png_start);
     httpd_resp_set_type(req, "image/png");
     httpd_resp_set_hdr(req, "Cache-Control", "max-age=86400");
