@@ -173,10 +173,8 @@ float pb_ntc_smoothed_c(pb_ntc_channel_t ch)
 // So the standard 3.3 V rail is the right constant, no fudge factor. TODO: for a
 // rigorous absolute check, compare against a probe co-located with the NTC at a
 // steady drying temp.
-#define PB_VSUPPLY_V      3.3f
-// Raw-count fault thresholds (from stock fcn.4200ca8e).
-#define PB_RAW_OPEN_MAX   0xFFD   // raw > this => open / over-range
-#define PB_RAW_SHORT_MIN  0x14    // raw <= this => short / under-range
+// PB_NTC_VSUPPLY_V and the raw-count fault thresholds now live in pb_ntc.h so the
+// pure pb_ntc_classify() helper and this read path share one definition.
 #define PB_AVG_WINDOW     5
 
 // R/T table, reverse-engineered verbatim from DROM @0x3c0e6638.
@@ -271,7 +269,7 @@ esp_err_t pb_ntc_init(void)
         s_win_idx[i] = 0;
     }
     s_ready = true;
-    ESP_LOGI(TAG, "init ok (Rref=%d kOhm, Vsupply=%.2f V)", s_rref_kohm, PB_VSUPPLY_V);
+    ESP_LOGI(TAG, "init ok (Rref=%d kOhm, Vsupply=%.2f V)", s_rref_kohm, PB_NTC_VSUPPLY_V);
     return ESP_OK;
 }
 
@@ -291,11 +289,10 @@ pb_ntc_status_t pb_ntc_read(pb_ntc_channel_t ch, float *out_c)
         if (adc_oneshot_read(s_adc, s_chan[ch], &raw) != ESP_OK) { st = PB_NTC_UNINIT; break; }
         int mv = 0;
         if (adc_cali_raw_to_voltage(s_cali[ch], raw, &mv) != ESP_OK) { st = PB_NTC_UNINIT; break; }
-        if (raw > PB_RAW_OPEN_MAX)  { st = PB_NTC_OPEN;  break; }
-        if (raw <= PB_RAW_SHORT_MIN) { st = PB_NTC_SHORT; break; }
         float v = (float)mv / 1000.0f;               // volts at the pin
-        if (v <= 0.0f || v >= PB_VSUPPLY_V) { st = PB_NTC_OPEN; break; }
-        float r_kohm = (float)s_rref_kohm * v / (PB_VSUPPLY_V - v);
+        st = pb_ntc_classify(raw, v);                // shared open/short/rail ladder
+        if (st != PB_NTC_OK) break;
+        float r_kohm = (float)s_rref_kohm * v / (PB_NTC_VSUPPLY_V - v);
         t = rntc_to_temp_c(r_kohm);
         t += ntc_offset_c(ch);                        // apply calibration offset
         push_average(ch, t);                          // feed the display filter

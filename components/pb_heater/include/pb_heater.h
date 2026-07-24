@@ -80,6 +80,33 @@ static inline bool pb_heater_fault_decide(bool open_ok, bool ns_not_found,
 #define PB_HEATER_COMMS_TIMEOUT_MS_MIN      (10 * 1000)
 #define PB_HEATER_COMMS_TIMEOUT_MS_MAX      (5 * 60 * 1000)
 
+// Pure safety-trip decision for pb_heater_tick(), inline so the fail-closed
+// priority ordering can be host-tested without the ADC/SSR/RTOS backend. Given the
+// freshest per-channel sensor reads (status-OK flags + instantaneous °C), whether a
+// target is armed, and whether the comms deadman has expired, returns the fault the
+// tick must latch — or PB_FAULT_NONE if it is safe to run the bang-bang loop. The
+// order is load-bearing and MUST stay identical to pb_heater_tick():
+//   1. PTC over-temp     — only trusted when the PTC sensor reads valid
+//   2. chamber over-temp — only trusted when the chamber sensor reads valid
+//   3. armed + chamber sensor NOT ok -> fail-closed (blind heater)
+//   4. armed + PTC sensor NOT ok     -> fail-closed (unmonitored element)
+//   5. armed + comms deadman expired -> link-lost watchdog
+// The over-temp cutoffs fire regardless of `armed`; the sensor-fault and comms
+// trips are gated on `armed` (an idle heater with a disconnected sensor is not a
+// hazard). A non-OK sensor also means its temperature is NAN — the `*_ok` gate on
+// each over-temp check keeps a NAN comparison from ever masking a real trip.
+static inline pb_fault_reason_t pb_heater_eval_trip(
+    bool ptc_ok, float ptc_c, bool chamber_ok, float chamber_c,
+    bool armed, bool link_expired)
+{
+    if (ptc_ok && ptc_c >= PB_HEATER_PTC_CUTOFF_C)          return PB_FAULT_PTC_OVERTEMP;
+    if (chamber_ok && chamber_c >= PB_HEATER_CHAMBER_MAX_C) return PB_FAULT_CHAMBER_OVERTEMP;
+    if (armed && !chamber_ok)                               return PB_FAULT_CHAMBER_SENSOR;
+    if (armed && !ptc_ok)                                   return PB_FAULT_PTC_SENSOR;
+    if (armed && link_expired)                              return PB_FAULT_LINK_LOST;
+    return PB_FAULT_NONE;
+}
+
 // Bring up the SSR GPIO in a guaranteed-OFF state. Call before anything can
 // request heat. Idempotent.
 esp_err_t pb_heater_init(void);
