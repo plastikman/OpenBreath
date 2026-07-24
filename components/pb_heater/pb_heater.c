@@ -42,12 +42,15 @@ static uint32_t c_to_centi(float c)
 
 static void ssr_set(bool on)        // control-task context only
 {
+#ifndef CONFIG_PB_HIL_DEVBOARD
     gpio_set_level(PB_GPIO_RELAY, on ? 1 : 0);
+#endif
     s_on = on;
 }
 
 esp_err_t pb_heater_init(void)
 {
+#ifndef CONFIG_PB_HIL_DEVBOARD
     const gpio_config_t io = {
         .pin_bit_mask = (1ULL << PB_GPIO_RELAY),
         .mode = GPIO_MODE_OUTPUT,
@@ -57,6 +60,7 @@ esp_err_t pb_heater_init(void)
     };
     esp_err_t err = gpio_config(&io);
     if (err != ESP_OK) return err;
+#endif
     ssr_set(false);                  // guaranteed OFF before any request
     taskENTER_CRITICAL(&s_mux);
     s_target_c = 0.0f;
@@ -68,7 +72,11 @@ esp_err_t pb_heater_init(void)
     s_max_target_c = PB_HEATER_MAX_TARGET_C_DEFAULT;
     s_comms_timeout_us = (int64_t)PB_HEATER_COMMS_TIMEOUT_MS_DEFAULT * 1000;
     taskEXIT_CRITICAL(&s_mux);
+#ifdef CONFIG_PB_HIL_DEVBOARD
+    ESP_LOGW(TAG, "HIL dev-board backend: relay GPIO compiled out");
+#else
     ESP_LOGI(TAG, "init: SSR forced OFF");
+#endif
     return ESP_OK;
 }
 

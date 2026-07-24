@@ -1,5 +1,6 @@
 # ESP-IDF build artifacts
 build/
+build-*/
 sdkconfig
 sdkconfig.old
 managed_components/
@@ -21,3 +22,6 @@ main/dev_config.h.local
 
 # stock flash backups written by tools/flash.py
 backups/
+
+# Serial HIL transcripts and reports
+hil-results/

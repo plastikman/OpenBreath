@@ -20,7 +20,8 @@ re-implemented.
 **Docs:** full feature set → [`docs/FEATURES.md`](docs/FEATURES.md) · control API →
 [`docs/api-v2.md`](docs/api-v2.md) · safety model → [`docs/SAFETY.md`](docs/SAFETY.md) ·
 OEM parity → [`docs/OEM_PARITY.md`](docs/OEM_PARITY.md) · hardware →
-[`docs/HARDWARE.md`](docs/HARDWARE.md).
+[`docs/HARDWARE.md`](docs/HARDWARE.md) · hardware-in-loop testing →
+[`docs/HIL.md`](docs/HIL.md).
 
 ## Status
 | Component | State |
@@ -39,6 +40,7 @@ OEM parity → [`docs/OEM_PARITY.md`](docs/OEM_PARITY.md) · hardware →
 | Auto (follow-bed) / filament-dry modes | 🚧 Shipped in the state machine + UI (v0.3.0); end-to-end hardware soak in progress |
 | Flasher (`tools/flash.py`) | ✅ Backs up full stock flash first, then flashes; `--restore` returns to stock |
 | Web OTA update | ✅ Dual-OTA + rollback; upload from the UI, verified on hardware (DragonBreath-only, refused while heating) |
+| HIL (`pb_hil` / `tools/hil.py`) | 🚧 Dev-board native-USB/UART + real-Panda UART profiles implemented; CH341 dev-board suite qualified on hardware, real-Panda matrix pending |
 
 **Shared-core boundary:** board-agnostic infrastructure (WiFi, event log, Moonraker
 client) is referenced from the [OpenVent](https://github.com/justinh-rahb/OpenVent)
@@ -164,10 +166,11 @@ components/
   pb_heater/   SSR control + safety cutoffs + comms watchdog
   pb_fan/      TRIAC on/off held-gate blower control (never PWM)
   pb_policy/   authoritative control state, modes, leases -> actuators
+  pb_hil/      JSON serial HIL console + safe dev-board injection
   pb_httpd/    HTTP control API (CSRF-gated mutations)
   pb_portal/   captive-portal provisioning + live status dashboard
 main/          app_main: safety-first init + control loop
-docs/          hardware map, safety model, NTC RE report
+docs/          hardware map, safety model, HIL guide, NTC RE report
 ```
 
 ## Credits

@@ -19,9 +19,11 @@ static const char *TAG = "pb_leds";
 #define CODE_OFF_TICKS     3    // 150 ms between pulses within a burst
 #define CODE_GAP_TICKS    16    // 800 ms quiet gap after each burst
 
+#ifndef CONFIG_PB_HIL_DEVBOARD
 static const gpio_num_t s_gpio[PB_LED_COUNT] = {
     PB_GPIO_LED_K1, PB_GPIO_LED_K2, PB_GPIO_LED_K3, PB_GPIO_LED_POWER,
 };
+#endif
 
 // The "Power" LED (index 3 / GPIO21) shares the UART0 console TX pin, so it is
 // only claimed + driven when CONFIG_PB_POWER_LED is set (release builds). When
@@ -85,7 +87,11 @@ static void led_task(void *arg)
                 cs[i].sub = 0;
                 break;
             }
+#ifndef CONFIG_PB_HIL_DEVBOARD
             gpio_set_level(s_gpio[i], on ? 1 : 0);
+#else
+            (void)on;
+#endif
         }
         tick++;
         vTaskDelay(pdMS_TO_TICKS(TICK_MS));
@@ -96,6 +102,7 @@ esp_err_t pb_leds_start(void)
 {
     if (s_task) return ESP_ERR_INVALID_STATE;
 
+#ifndef CONFIG_PB_HIL_DEVBOARD
     uint64_t mask = 0;
     for (int i = 0; i < PB_LED_COUNT; i++)
         if (PB_LED_DRIVEN(i)) mask |= 1ULL << s_gpio[i];   // skip GPIO21 unless enabled
@@ -108,17 +115,24 @@ esp_err_t pb_leds_start(void)
     };
     esp_err_t err = gpio_config(&cfg);
     if (err != ESP_OK) return err;
+#endif
     for (int i = 0; i < PB_LED_COUNT; i++) {
         atomic_store(&s_pat[i], PB_LED_OFF);
         atomic_store(&s_code[i], 0);
+#ifndef CONFIG_PB_HIL_DEVBOARD
         if (PB_LED_DRIVEN(i)) gpio_set_level(s_gpio[i], 0);
+#endif
     }
 
     if (xTaskCreate(led_task, "pb_leds", 2048, NULL, 3, &s_task) != pdPASS) {
         s_task = NULL;
         return ESP_ERR_NO_MEM;
     }
+#ifdef CONFIG_PB_HIL_DEVBOARD
+    ESP_LOGW(TAG, "HIL dev-board backend: LED GPIO writes compiled out");
+#else
     ESP_LOGI(TAG, "started");
+#endif
     return ESP_OK;
 }
 
@@ -133,4 +147,10 @@ void pb_leds_set_code(pb_led_id_t id, uint8_t pulses)
     if (id < 0 || id >= PB_LED_COUNT) return;
     atomic_store(&s_code[id], pulses);
     atomic_store(&s_pat[id], PB_LED_CODE);
+}
+
+pb_led_pattern_t pb_leds_get(pb_led_id_t id)
+{
+    if (id < 0 || id >= PB_LED_COUNT) return PB_LED_OFF;
+    return atomic_load(&s_pat[id]);
 }

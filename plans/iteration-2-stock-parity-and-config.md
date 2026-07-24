@@ -21,8 +21,8 @@ Decisions locked with the user: **phased plan**, **all four buttons usable**
 > in v0.3.0 & hardware-validated — **except B2** (thermal-purge + NVS-persisted fault
 > latch), deferred · Phase C ⬜ not started (buttons — all 4 pins mapped, ready to build) · Phase D 🟡 partial (v2 dashboard
 > covers D2/D3; D4 parity matrix documented; D1 shell open) · Phase E 🟡 partial (release/build CI +
-> host tests; broader static-analysis/sim/dev-board target open). **Next candidates:** B2
-> safety hardening, Phase C button, or Phase D1/D4 dashboard polish.
+> host tests + UART dev-board HIL qualified; broader static-analysis/sim and real-Panda matrix open). **Next candidates:** B2
+> safety hardening, Phase C button, or Phase D1 dashboard polish.
 
 Not covered / explicitly out of scope: stock OEM WebSocket protocol + web UI,
 Bambu binding, and the stock `filtertemp`/`heater_temp` auto parameters
@@ -344,10 +344,15 @@ enhancement, not required parity until OEM behavior confirms it.
 
 > 🟡 **Partial.** **E1** in progress: firmware-build + release CI (SHA-pinned actions,
 > least-privilege perms) and host-side tests exist (`pb_policy` host test, `check_api_v2_contract.sh`,
-> dashboard JS check). **Open:** the fuller **E1** gate (warnings-as-errors, formatting,
+> dashboard JS check, HIL runner tests). **E3/E4 tooling is implemented:** isolated
+> native-USB/UART dev-board and UART Panda profiles, compile-time no-op Panda mains backends,
+> JSON serial injection/state, scripted suites, console capture, and JSON reports.
+> The full dev-board suite is hardware-qualified over its CH341-family UART bridge;
+> native-USB runtime diagnosis and the real-Panda release matrix remain open.
+> **Open:** the fuller **E1** gate (warnings-as-errors, formatting,
 > static analysis, dependency validation on every PR), **E2** broad host/sim fault coverage
-> (sensor faults, corrupt NVS, reconnect storms, stale leases, malformed API, OTA rollback),
-> and **E3** the ESP32-C3 dev-board target with heater output compile-time disabled.
+> (corrupt NVS, reconnect storms, malformed API, OTA rollback), native-USB runtime
+> qualification, and real-Panda physical HIL sign-off.
 
 **E1. CI/static analysis.** Run warnings-as-errors, formatting, static analysis,
 dependency validation, host-side unit tests, frontend validation, and API/schema

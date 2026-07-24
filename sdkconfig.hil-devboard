@@ -1,0 +1,13 @@
+# ESP32-C3 development-board HIL overlay.
+# Build with:
+#   idf.py -B build-hil-devboard \
+#     -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.hil-devboard" build
+CONFIG_PB_HIL_CONSOLE=y
+CONFIG_PB_HIL_DEVBOARD=y
+
+# This dual-USB-C dev board is connected through the ESP32-C3 native USB port.
+# Use the built-in USB Serial/JTAG device for flashing, commands, and log capture.
+# Never combine this profile with sdkconfig.release.
+# CONFIG_PB_POWER_LED is not set
+# CONFIG_ESP_CONSOLE_UART_DEFAULT is not set
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y

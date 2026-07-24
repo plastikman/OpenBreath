@@ -40,3 +40,9 @@ pb_ntc_status_t pb_ntc_last_status(pb_ntc_channel_t ch);
 // Latest smoothed temperature (5-sample moving average, for display/telemetry).
 // NAN if no valid reading yet. Fed by pb_ntc_read on each OK sample.
 float pb_ntc_smoothed_c(pb_ntc_channel_t ch);
+
+#ifdef CONFIG_PB_HIL_DEVBOARD
+// Dev-board HIL backend. Production builds do not expose or compile this API.
+void pb_ntc_hil_set(pb_ntc_channel_t ch, pb_ntc_status_t status, float temp_c);
+void pb_ntc_hil_reset(void);
+#endif

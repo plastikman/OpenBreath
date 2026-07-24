@@ -10,6 +10,8 @@ on:
       - 'CMakeLists.txt'
       - 'partitions.csv'
       - 'sdkconfig.defaults'
+      - 'sdkconfig.hil-*'
+      - 'tools/hil.py'
       - '.github/workflows/firmware-build.yml'
   pull_request:
     paths:
@@ -19,6 +21,8 @@ on:
       - 'CMakeLists.txt'
       - 'partitions.csv'
       - 'sdkconfig.defaults'
+      - 'sdkconfig.hil-*'
+      - 'tools/hil.py'
   workflow_dispatch:
 
 # Least-privilege GITHUB_TOKEN: the build only needs to read code and upload
@@ -44,6 +48,9 @@ jobs:
       - name: Test authoritative policy state machine
         run: sh tests/run_policy_host_test.sh
 
+      - name: Test HIL scenario runner
+        run: python3 -m unittest tests/test_hil_runner.py
+
       - name: Check API v2 contract and dashboard ownership
         run: |
           sh tests/check_api_v2_contract.sh
@@ -56,6 +63,24 @@ jobs:
           target: esp32c3
           path: '.'
 
+      - name: Build safe dev-board HIL profile (ESP-IDF v5.3)
+        uses: espressif/esp-idf-ci-action@9d38657f3d789ca759b2b37aaf5ceffbc42c4f0d # v1
+        with:
+          esp_idf_version: v5.3
+          target: esp32c3
+          path: '.'
+          command: |
+            idf.py -B build-hil-devboard \
+              -DSDKCONFIG="$PWD/build-hil-devboard/sdkconfig.profile" \
+              -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.hil-devboard" \
+              build
+            sh tests/check_hil_compileout.sh build-hil-devboard
+            idf.py -B build-hil-devboard-uart \
+              -DSDKCONFIG="$PWD/build-hil-devboard-uart/sdkconfig.profile" \
+              -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.hil-devboard-uart" \
+              build
+            sh tests/check_hil_compileout.sh build-hil-devboard-uart
+
       - name: Upload firmware artifacts
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
@@ -64,4 +89,6 @@ jobs:
             build/dragonbreath.bin
             build/bootloader/bootloader.bin
             build/partition_table/partition-table.bin
+            build-hil-devboard/dragonbreath.bin
+            build-hil-devboard-uart/dragonbreath.bin
           if-no-files-found: warn

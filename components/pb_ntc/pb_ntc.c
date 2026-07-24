@@ -6,11 +6,87 @@
 #include <math.h>
 #include <string.h>
 #include "esp_log.h"
+#ifdef CONFIG_PB_HIL_DEVBOARD
+#include "freertos/FreeRTOS.h"
+#else
 #include "esp_adc/adc_oneshot.h"
 #include "esp_adc/adc_cali.h"
 #include "esp_adc/adc_cali_scheme.h"
+#endif
 
 static const char *TAG = "pb_ntc";
+
+#ifdef CONFIG_PB_HIL_DEVBOARD
+
+static portMUX_TYPE s_hil_mux = portMUX_INITIALIZER_UNLOCKED;
+static float s_hil_temp[2];
+static pb_ntc_status_t s_hil_status[2];
+static pb_ntc_status_t s_last_status[2];
+static bool s_ready;
+
+void pb_ntc_hil_reset(void)
+{
+    taskENTER_CRITICAL(&s_hil_mux);
+    for (int i = 0; i < 2; ++i) {
+        s_hil_temp[i] = 25.0f;
+        s_hil_status[i] = PB_NTC_OK;
+        s_last_status[i] = PB_NTC_OK;
+    }
+    taskEXIT_CRITICAL(&s_hil_mux);
+}
+
+void pb_ntc_hil_set(pb_ntc_channel_t ch, pb_ntc_status_t status, float temp_c)
+{
+    if (ch < PB_NTC_CHAMBER || ch > PB_NTC_PTC) return;
+    taskENTER_CRITICAL(&s_hil_mux);
+    s_hil_status[ch] = status;
+    s_hil_temp[ch] = temp_c;
+    s_last_status[ch] = status;
+    taskEXIT_CRITICAL(&s_hil_mux);
+}
+
+esp_err_t pb_ntc_init(void)
+{
+    pb_ntc_hil_reset();
+    s_ready = true;
+    ESP_LOGW(TAG, "HIL dev-board backend: ADC disabled; temperatures are injected");
+    return ESP_OK;
+}
+
+pb_ntc_status_t pb_ntc_read(pb_ntc_channel_t ch, float *out_c)
+{
+    if (!s_ready || ch < PB_NTC_CHAMBER || ch > PB_NTC_PTC) {
+        if (out_c) *out_c = NAN;
+        return PB_NTC_UNINIT;
+    }
+    taskENTER_CRITICAL(&s_hil_mux);
+    pb_ntc_status_t status = s_hil_status[ch];
+    float temp_c = status == PB_NTC_OK ? s_hil_temp[ch] : NAN;
+    s_last_status[ch] = status;
+    taskEXIT_CRITICAL(&s_hil_mux);
+    if (out_c) *out_c = temp_c;
+    return status;
+}
+
+pb_ntc_status_t pb_ntc_last_status(pb_ntc_channel_t ch)
+{
+    if (ch < PB_NTC_CHAMBER || ch > PB_NTC_PTC) return PB_NTC_UNINIT;
+    taskENTER_CRITICAL(&s_hil_mux);
+    pb_ntc_status_t status = s_last_status[ch];
+    taskEXIT_CRITICAL(&s_hil_mux);
+    return status;
+}
+
+float pb_ntc_smoothed_c(pb_ntc_channel_t ch)
+{
+    if (!s_ready || ch < PB_NTC_CHAMBER || ch > PB_NTC_PTC) return NAN;
+    taskENTER_CRITICAL(&s_hil_mux);
+    float temp_c = s_hil_status[ch] == PB_NTC_OK ? s_hil_temp[ch] : NAN;
+    taskEXIT_CRITICAL(&s_hil_mux);
+    return temp_c;
+}
+
+#else
 
 // Low-side NTC divider supply K in Rntc = Rref*V/(K-V) = the ~3.3 V rail.
 // (The RE report's 0.1 V was wrong; on hardware the pin sits ~1.6 V at ambient.)
@@ -162,3 +238,5 @@ float pb_ntc_smoothed_c(pb_ntc_channel_t ch)
     for (int i = 0; i < s_win_cnt[ch]; i++) sum += s_win[ch][i];
     return sum / (float)s_win_cnt[ch];
 }
+
+#endif
