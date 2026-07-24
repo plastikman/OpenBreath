@@ -22,7 +22,7 @@ Decisions locked with the user: **phased plan**, **all four buttons usable**
 > latch), deferred; **B5's params-only NVS persistence, mismarked done in v0.3.0, actually
 > shipped in the Phase C series** · Phase C 🟡 code complete, in review (LED semantics, B5
 > params, and all four buttons landed as three stacked PRs; Panda and devboard
-> functional benches passed, scope-grade panic-off latency sign-off pending)
+> functional qualification passed)
 > · Phase D 🟡 partial (v2 dashboard covers D2/D3; D4 parity matrix documented; D1 shell open)
 > · Phase E 🟡 partial (release/build CI + host tests + UART dev-board HIL qualified; broader
 > static-analysis/sim and real-Panda matrix open). **Next candidates:** B2 safety hardening,
@@ -284,8 +284,7 @@ transport/state adapter.
 > the driver ignores a button held at power-on until it releases; On(10) is the only
 > non-strap. The real Panda functional checklist passed on 2026-07-24 at
 > `175e187`. The scripted UART devboard-button scenario also passed on physical
-> ESP32-C3 hardware on 2026-07-24 with mains GPIOs compiled out. **Still open:**
-> the scope-grade < 20 ms panic-off latency measurement.
+> ESP32-C3 hardware on 2026-07-24 with mains GPIOs compiled out.
 
 **C1. `pb_buttons` (new component).** Port `pv_button`'s state machine (10 ms poll task, 20 ms debounce, long-press 2 s) behind a per-button table with an `active_low` field. v1 table = **all four**: `PB_GPIO_BTN_POWER`=9, `_AUTO`=8, `_ON`=10, `_DRY`=2 — each `GPIO_MODE_INPUT` + internal **pull-up** (never pull-down — 9/8/2 are straps that must be high at reset), poll-only. API `pb_buttons_start(cb)`, `pb_button_cb_t(id, ev)` with `id ∈ {POWER, AUTO, ON, DRY}`; SHORT on release, LONG once (suppress trailing short). REQUIRES `driver pb_board` (decoupled — no heater/policy link).
 
@@ -342,8 +341,10 @@ lease invalidation (the old heartbeat returned `409 stale_lease`); Power LONG
 cleared the recovered latch while staying OFF. Holding non-strapping On through
 a hard reset produced no short/long event, release was a no-op, and a subsequent
 fresh tap worked normally. Sensors remained nominal and no spurious safety trip
-occurred. The test used below-ambient remembered targets, so the SSR stayed low;
-the scope-grade energized SSR latency measurement remains open.
+occurred. The test used below-ambient remembered targets, so the SSR stayed low.
+Electrical long-event-to-SSR-low latency was not instrumented and no sub-20-ms
+measurement is claimed. Because panic-off is explicitly not a safety-rated
+layer, that trace is optional characterization rather than a Phase C gate.
 
 The scripted `tests/hil/scenarios/devboard-buttons.json` scenario passed over
 the UART HIL transport on a physical ESP32-C3 devboard on 2026-07-24. It

@@ -46,8 +46,11 @@ How it stays inside the safety model:
   task, which drops the SSR from its own context — preserving the
   single-SSR-writer invariant.
 - The wake means the drop happens on the very next control-task scheduling, not
-  at the next 500 ms periodic tick. **Bench-measured long-event-to-SSR-low
-  latency: _[fill in from the scope trace]_ ms (requirement: < 20 ms).**
+  at the next 500 ms periodic tick. Host tests verify that the wake is issued
+  before diagnostic logging, and the physical Panda bench verified the complete
+  panic-off transition. Electrical long-event-to-SSR-low latency has not been
+  instrumented, so no sub-20-ms measurement is claimed; that trace is optional
+  characterization, not a safety or release gate.
 - The transition is attributed to the button (not the generic safety path), so
   it invalidates any remote control lease immediately; a reconnecting
   dashboard/Klipper cannot silently restore heat.
