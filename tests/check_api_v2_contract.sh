@@ -33,6 +33,23 @@ grep -q "document.getElementById('atin').value" "$portal"
 grep -q "document.getElementById('dtin').value" "$portal"
 grep -q "Rejected: '+errText" "$portal"
 grep -q 'strcmp(s_replay\[i\].actor_id, actor_id)' "$httpd"
+
+# Remembered mode parameters must stay in the authoritative snapshot and state
+# document: the dashboard pre-fills from them and buttons re-arm from them.
+for field in manual_target_c auto_target_c auto_bed_threshold_c dry_target_c dry_hours; do
+    grep -q "\"$field\"" "$httpd" || {
+        echo "state document is missing params.$field" >&2
+        exit 1
+    }
+    grep -q "s.params.$field" "$portal" || {
+        echo "dashboard no longer pre-fills from params.$field" >&2
+        exit 1
+    }
+done
+grep -q 's->params.manual_target_c' "$httpd" || {
+    echo "state document no longer uses the lock-consistent params snapshot" >&2
+    exit 1
+}
 grep -q 'expected->valuedouble < UINT32_MAX' "$httpd"
 
 if grep -q 'cJSON_AddStringToObject(lease, "id"' "$httpd"; then

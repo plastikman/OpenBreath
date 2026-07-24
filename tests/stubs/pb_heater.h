@@ -3,6 +3,9 @@
 #include <stdint.h>
 #include "esp_err.h"
 
+// Mirrors the real ceiling: pb_policy clamps persisted parameters against it.
+#define PB_HEATER_ABS_MAX_TARGET_C 70.0f
+
 esp_err_t pb_heater_set_target_c(float target_c);
 float pb_heater_get_target_c(void);
 float pb_heater_get_max_target_c(void);

@@ -228,6 +228,7 @@ void app_main(void)
     // loop above is already running, so safety + telemetry continue.
     nvs_init();
     pb_heater_load_config();                 // apply persisted max-target + comms timeout (NVS is up now)
+    pb_policy_load_params();                 // remembered mode params (never a mode/target — boot stays OFF)
 #ifndef CONFIG_PB_HIL_DEVBOARD
     brand_ap();                              // AP name = DragonBreath_XXXX
 #if defined(DB_WIFI_SSID) || defined(DB_MOONRAKER_HOST)
