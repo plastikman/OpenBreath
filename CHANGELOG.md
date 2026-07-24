@@ -7,6 +7,8 @@ below into the GitHub Release notes.
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-07-24
+
 ### Changed
 - **Vendored the OpenVent shared core locally (no more submodule).** The three
   board-agnostic components that were built from the `external/OpenVent` git
