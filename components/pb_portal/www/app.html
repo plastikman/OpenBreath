@@ -49,6 +49,8 @@ body{
   background: var(--background);
   font: 14px/1.35 var(--font-sans);
   overflow: hidden;              /* embeds cleanly in a Fluidd/Mainsail iframe */
+  display: grid;                 /* center + bound the app on large/4K displays */
+  place-items: center;
 }
 [hidden]{ display: none !important; }
 
@@ -102,8 +104,15 @@ body{
 svg.icon{ width: 20px; height: 20px; fill: none; stroke: currentColor;
   stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 
-/* ---- Shell: topbar + icon rail + main. .app is the responsive query container. ---- */
-.app{ container-type: inline-size; height: 100%; }
+/* ---- Shell: topbar + icon rail + main. .app is the responsive query container.
+   width/height fill a small iframe (the Fluidd/Mainsail embed); the max-* caps
+   bound it into a centered panel on large/4K displays instead of sprawling. ---- */
+.app{ container-type: inline-size;
+  width: 100%; height: 100%;
+  max-width: 1200px; max-height: 820px;
+  overflow: hidden;
+  border: 1px solid var(--border); border-radius: var(--radius-lg);
+  box-shadow: 0 1px 4px light-dark(rgb(0 0 0 / 8%), rgb(0 0 0 / 30%)); }
 .shell{
   height: 100%;
   display: grid;
@@ -234,12 +243,11 @@ svg.icon{ width: 20px; height: 20px; fill: none; stroke: currentColor;
 .settings-links{ display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
 .settings-links .btn{ gap: 6px; text-decoration: none; }
 
-/* ---- U2 [P1] fix: keep each control screen's primary action visible at compact
-   size. The controls scroll inside the screen's own single scroll (.page-only),
-   while the action+feedback stay pinned to the bottom — no nested scrollbar. ---- */
-.mode-footer{ position: sticky; bottom: 0; margin-top: auto; z-index: 3;
-  display: flex; flex-direction: column; gap: 4px; padding-top: 8px;
-  background: linear-gradient(to top, var(--card) 78%, transparent); }
+/* ---- Primary action + feedback sit in normal flow right below the controls.
+   (An earlier sticky bottom:0 footer floated OVER the last control when the
+   screen was tight — the whole .mode-controls scrolls instead, so the action
+   never overlaps.) ---- */
+.mode-footer{ display: flex; flex-direction: column; gap: 4px; padding-top: 4px; }
 .mode-footer .mode-action{ margin-top: 0; }
 
 /* ---- U3 Settings: a single scrolling column of sections; each section is a
