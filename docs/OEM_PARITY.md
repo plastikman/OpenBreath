@@ -14,7 +14,7 @@ Current as of **v0.3.0**.
 | Chamber and PTC temperature display | **Implemented** | Both sensors and their health are exposed in the dashboard and API v2 state. |
 | Sensor-fault and over-temperature shutdown | **Implemented** | Heater fails closed; fixed 85 °C chamber and 105 °C PTC cutoffs are not user-configurable. |
 | Fan follows heater | **Implemented** | TRIAC is held on/off and never phase-angle PWM'd. |
-| Residual-heat fan purge | **Partial** | Current cooldown is session-gated. A temperature-latched purge that survives reboot is planned with the persistent-fault work. |
+| Residual-heat fan purge | **Partial** | Current cooldown is session-gated. A persisted, opt-in temperature-latched policy is planned; the default will remain session-gated so a warm idle chamber does not start the fan unexpectedly. Fault airflow remains unconditional. |
 | Front-panel mode LEDs | **Implemented** | Power/On indicate heat and fault; Auto/Dry indicate mode. Power LED is release-build-only because GPIO21 shares console TX. |
 | Front-panel buttons | **Planned** | All four inputs are mapped: Power GPIO9, Auto GPIO8, On GPIO10, Dry GPIO2. Button policy and debounce are Phase C work. |
 | Local status/configuration UI | **Implemented** | Responsive work continues, but manual, automatic, drying, safety settings, setup, and OTA controls are present. |

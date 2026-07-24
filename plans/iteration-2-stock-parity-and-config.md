@@ -125,8 +125,9 @@ added alongside `POST /settings` (bounds + current values in one read); `max_uri
 >   the policy/API can enter DRYING and arm AUTO. The shipped dashboard controls are
 >   **not yet accepted as end-to-end validated** after a user report that neither action
 >   appeared to take effect; their feedback/control wiring remains follow-up work.
-> - **⚠ Partial / carried forward — B2 NOT done:** the thermal-purge latch (engage ≥40 °C,
->   hysteresis release) and the **NVS-persisted** fault latch are unimplemented. `thermal_purge`
+> - **⚠ Partial / carried forward — B2 NOT done:** the opt-in thermal-purge policy
+>   (engage ≥40 °C, hysteresis release) and the **NVS-persisted** fault latch are
+>   unimplemented. `thermal_purge`
 >   in the snapshot is a *heuristic* derived from the v0.2.0 post-print fan cooldown (#6), not
 >   the dedicated purge latch; the fault latch is **RAM-only** (a reboot clears it) — persisting
 >   it is deferred, independently-reviewable safety work.
@@ -174,9 +175,16 @@ safety work and must not be hidden inside transport parsing.
   none may retain a private hardware-control state.
 
 **B2. Thermal purge + persistent fault latch.**
-- Add a thermal-purge latch: engage when either chamber or PTC temperature
-  reaches 40 °C; disengage only after both fall below a documented hysteresis
-  boundary. Purge overrides mode, target, printer state, and user fan requests.
+- Add an NVS-backed purge policy with two choices:
+  - `session` (**default**) preserves the current behavior: purge only after heat
+    was active in the current boot/session, then stop below 40 °C.
+  - `temperature` (opt-in) latches purge when either chamber or PTC reaches
+    40 °C and releases only after both fall below 37 °C. It is recomputed from
+    valid sensor readings after reboot, so the transient latch itself need not
+    be persisted.
+- While either purge policy is active, airflow overrides mode, target, printer
+  state, and ordinary user fan requests. Changing the preference must never
+  affect fault airflow.
 - Any fault forces heater OFF, fan ON continuously, and rejects heat/mode
   commands.
 - Persist the fault latch and reason in NVS on latch transitions. Power cycling
@@ -365,7 +373,9 @@ pre-release qualification gate.
 - **SSR single-writer:** only `control_task`'s `ssr_set()` drives GPIO18. Every cross-task "off" is a mux-guarded latch that converges on the next tick (≤500 ms).
 - **No unbounded unattended local heat:** AUTO bounded by live Moonraker data, DRYING by its ≤12 h timer, local POWER_ON by the runtime cap; boot never self-arms.
 - Comms deadman is configurable from 10 s to 5 min but never disabled or extended beyond five minutes for remote POWER_ON. It is self-fed only while a bounded local mode's liveness precondition holds — and even then it only defeats the communications timeout, never the over-temp/sensor cutoffs.
-- **Residual-heat purge:** the fan remains ON above the 40 °C purge threshold (with hysteresis), even after target/mode OFF.
+- **Residual-heat purge:** session-gated cooldown remains the default. An explicit
+  persisted `temperature` policy keeps the fan ON above 40 °C (37 °C release),
+  including after reboot; fault airflow is unconditional in either policy.
 - **Persistent faults:** fault state survives power loss; active heat state, deadlines, and leases never do. A faulted boot is heater OFF, fan ON, commands inhibited.
 - **One authoritative state:** hardware, API, dashboard, Klipper, buttons, watchdog, and safety logic consume the same policy snapshot. No stale client/reconnect path may restore heat.
 - Physical OFF, watchdog, and safety actions invalidate remote ownership. Re-arming always requires a fresh command.
@@ -399,7 +409,7 @@ a core revision and build it in CI.
 Build: `cd ~/git/DragonBreath && idf.py build`; flash `idf.py -p /dev/ttyUSB0 flash`. Device on the bench at `10.168.2.53`.
 - **0:** all product-visible names are DragonBreath; a tagged CI release produces a complete install bundle + OTA image with a manifest whose hashes match the downloaded files.
 - **A:** `max=90` → clamps to 70; `comms_ms=5000` → clamps to 10000; `comms_ms=3600000` → clamps to 300000; lower `max` below an armed target → target pulled down; dashboard input `max` tracks state; force a fault → K1 blinks; over-temp cutoffs unchanged.
-- **B:** each mode drives the target; AUTO engages at the bed threshold and fails to 0 when Moonraker drops; drying counts down, auto-offs, and hard-caps at 12 h; reboot → OFF (no resume); 40 °C purge keeps the fan running after target OFF; fault → power-cycle restores inhibited/fan-ON state; stale lease/reconnect cannot restore heat; over-temp still trips; `M141 S45` still heats (= POWER_ON). Verify through the versioned state/command/event API.
+- **B:** each mode drives the target; AUTO engages at the bed threshold and fails to 0 when Moonraker drops; drying counts down, auto-offs, and hard-caps at 12 h; reboot → OFF (no resume); default `session` purge never starts from ambient temperature alone; opt-in `temperature` purge engages at 40 °C, releases at 37 °C, and re-engages after reboot while still hot; fault airflow remains ON under both settings; fault → power-cycle restores inhibited/fan-ON state; stale lease/reconnect cannot restore heat; over-temp still trips; `M141 S45` still heats (= POWER_ON). Verify through the versioned state/command/event API.
 - **C:** the bench checklist above.
 - **D:** exercise every control from standalone and narrow iframe layouts; button/Klipper/safety changes appear promptly and no stale UI state reasserts a command.
 - **E:** static/unit/simulation suites pass; dev-board HIL proves injected failure/ownership scenarios; real-Panda release matrix passes.

@@ -70,7 +70,9 @@ AC blower switched by a TRIAC held **on/off** (never phase-angle PWM'd), synced
 to the mains zero-cross detector. Airflow follows the heater; **post-print
 cooldown** keeps the blower running after a heating session until the chamber
 falls below 40 °C (gated on a heat-this-session flag, so it never auto-starts on
-temperature alone).
+temperature alone). A future persisted setting may opt into temperature-latched
+purging across sessions/reboots; session-gated behavior remains the default.
+Fault airflow is always forced on regardless of this preference.
 
 ## Control API (port 80)
 
