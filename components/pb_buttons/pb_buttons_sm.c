@@ -32,7 +32,10 @@ pb_btn_event_t pb_buttons_sm_step(pb_btn_sm_t *b, int raw_level)
         b->last_raw = raw_level;
         return PB_BTN_EV_NONE;
     }
-    if (b->settle > 0) { b->settle--; return PB_BTN_EV_NONE; }
+    if (b->settle > 0) {
+        b->settle--;
+        if (b->settle > 0) return PB_BTN_EV_NONE;
+    }
 
     bool pressed_now = raw_is_pressed(b, raw_level);
 

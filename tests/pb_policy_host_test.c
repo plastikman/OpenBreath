@@ -113,8 +113,13 @@ void pb_leds_set(pb_led_id_t id, pb_led_pattern_t pattern)
 static unsigned wake_calls;
 static void count_wake(void) { wake_calls++; }
 
+static bool panic_logged_before_wake;
 void pv_evlog_init(void) {}
-void pv_evlog_add(const char *fmt, ...) { (void)fmt; }
+void pv_evlog_add(const char *fmt, ...)
+{
+    if (strstr(fmt, "panic-off") && wake_calls == 0)
+        panic_logged_before_wake = true;
+}
 
 // --- In-memory NVS ----------------------------------------------------------
 // Enough of the API for pb_policy's parameter persistence, plus a failure switch
@@ -212,6 +217,7 @@ static void reset_fixture(void)
     heater_comms_timeout_ms = 5U * 60U * 1000U;
     fan_level = 0;
     wake_calls = 0;
+    panic_logged_before_wake = false;
     memset(led_pattern, 0, sizeof led_pattern);
     chamber_c = 25.0f;
     ptc_c = 25.0f;
@@ -738,6 +744,7 @@ static void test_button_long_press_panic_off(void)
     CHECK(snap.mode == PB_MODE_OFF);
     CHECK(!snap.lease_active);
     CHECK(wake_calls == 1);                 // control task woken immediately
+    CHECK(!panic_logged_before_wake);       // diagnostics cannot delay the wake
 
     // The wake runs a real tick, which drops the SSR.
     pb_policy_tick();

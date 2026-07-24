@@ -222,8 +222,6 @@ void pb_heater_request_panic_off(const char *reason)   // any task
     s_latched_off = true;
     s_fault_reason = reason ? reason : "panic-off";
     taskEXIT_CRITICAL(&s_mux);
-    ESP_LOGW(TAG, "PANIC-OFF requested: %s (SSR drops next tick)",
-             reason ? reason : "(unspecified)");
 }
 
 void pb_heater_clear_fault(void)

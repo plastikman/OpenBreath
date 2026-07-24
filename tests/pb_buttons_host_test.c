@@ -23,6 +23,19 @@ static pb_btn_sm_t make(int seed_level)
     return b;
 }
 
+// A transition is accepted after exactly the configured number of stable
+// sample intervals, not one poll later.
+static void test_exact_debounce_timing(void)
+{
+    pb_btn_sm_t b = make(IDLE);
+    CHECK(pb_buttons_sm_step(&b, PRESSED) == PB_BTN_EV_NONE);
+    CHECK(!b.pressed);
+    CHECK(pb_buttons_sm_step(&b, PRESSED) == PB_BTN_EV_NONE);
+    CHECK(!b.pressed);
+    CHECK(pb_buttons_sm_step(&b, PRESSED) == PB_BTN_EV_NONE);
+    CHECK(b.pressed);
+}
+
 // Feed a level for n ticks, returning the single non-NONE event if exactly one
 // occurred, asserting there was at most one.
 static pb_btn_event_t feed(pb_btn_sm_t *b, int level, int ticks)
@@ -52,9 +65,9 @@ static void test_short_press_on_release(void)
 static void test_long_press_fires_once_no_trailing_short(void)
 {
     pb_btn_sm_t b = make(IDLE);
-    // 1 change tick + 2 settle ticks + 1 press-edge tick precede the hold
-    // counter, which then needs 200 ticks to reach 2000 ms -> LONG at tick 204.
-    pb_btn_event_t ev = feed(&b, PRESSED, 204);
+    // 1 change tick + 2 debounce ticks establish the press, then the hold
+    // counter needs 200 ticks to reach 2000 ms -> LONG at tick 203.
+    pb_btn_event_t ev = feed(&b, PRESSED, 203);
     CHECK(ev == PB_BTN_EV_LONG);
     // Keep holding: no repeat.
     CHECK(feed(&b, PRESSED, 50) == PB_BTN_EV_NONE);
@@ -117,6 +130,7 @@ static void test_active_high_polarity(void)
 
 int main(void)
 {
+    test_exact_debounce_timing();
     test_short_press_on_release();
     test_long_press_fires_once_no_trailing_short();
     test_bounce_produces_no_event();

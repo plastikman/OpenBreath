@@ -581,6 +581,9 @@ void pb_policy_request_panic_off(pb_source_t source, const char *reason)
     // Drop the SSR now rather than on the next periodic tick: the control task
     // runs the full safety tick immediately on this notification.
     if (s_wake_cb) s_wake_cb();
+    // Keep logging after the wake: diagnostic I/O must never consume the
+    // panic-off latency budget.
+    ESP_LOGW(TAG, "panic-off requested: %s", reason ? reason : "(unspecified)");
 }
 
 static const char *button_str(pb_button_id_t id)
@@ -638,8 +641,10 @@ void pb_policy_on_button(pb_button_id_t id, pb_button_event_t ev)
                          pb_policy_result_str(r));
             return;
         }
-        pv_evlog_add("btn: %s long -> panic-off", button_str(id));
         pb_policy_request_panic_off(PB_SOURCE_BUTTON, "button panic-off");
+        // The event log can wait on its diagnostic mutex, so record only after
+        // the heater is latched off and the control task has been notified.
+        pv_evlog_add("btn: %s long -> panic-off", button_str(id));
         return;
     }
 
