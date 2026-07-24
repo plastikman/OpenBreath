@@ -18,6 +18,9 @@ static const char *heater_reason;
 static unsigned heater_link_pets;
 static float heater_max_target_c;
 static uint32_t heater_comms_timeout_ms;
+// When set, the "sensor condition" is still unsafe, so the next tick re-latches
+// after any clear -- mirroring pb_heater_tick()'s real re-evaluation.
+static bool heater_relatch;
 static uint8_t fan_level;
 static pb_led_pattern_t led_pattern[PB_LED_COUNT];
 static float chamber_c = 25.0f;
@@ -60,12 +63,25 @@ uint32_t pb_heater_get_comms_timeout_ms(void)
     return heater_comms_timeout_ms;
 }
 void pb_heater_notify_link_alive(void) { heater_link_pets++; }
-void pb_heater_tick(void) { heater_on = heater_target > 0.0f && !heater_fault; }
+void pb_heater_tick(void)
+{
+    if (heater_relatch) { heater_fault = true; heater_reason = "still unsafe"; }
+    heater_on = heater_target > 0.0f && !heater_fault;
+}
 
 void pb_heater_emergency_off(const char *reason)
 {
     heater_target = 0.0f;
     heater_on = false;
+    heater_fault = true;
+    heater_reason = reason;
+}
+
+// Latch only — no "GPIO write". The real heater drops the SSR on the next tick;
+// the fake reflects that by not clearing heater_on until pb_heater_tick() runs.
+void pb_heater_request_panic_off(const char *reason)
+{
+    heater_target = 0.0f;
     heater_fault = true;
     heater_reason = reason;
 }
@@ -93,6 +109,12 @@ void pb_leds_set(pb_led_id_t id, pb_led_pattern_t pattern)
 {
     if (id >= 0 && id < PB_LED_COUNT) led_pattern[id] = pattern;
 }
+
+static unsigned wake_calls;
+static void count_wake(void) { wake_calls++; }
+
+void pv_evlog_init(void) {}
+void pv_evlog_add(const char *fmt, ...) { (void)fmt; }
 
 // --- In-memory NVS ----------------------------------------------------------
 // Enough of the API for pb_policy's parameter persistence, plus a failure switch
@@ -185,15 +207,18 @@ static void reset_fixture(void)
     heater_inhibited = false;
     heater_reason = NULL;
     heater_link_pets = 0;
+    heater_relatch = false;
     heater_max_target_c = 70.0f;
     heater_comms_timeout_ms = 5U * 60U * 1000U;
     fan_level = 0;
+    wake_calls = 0;
     memset(led_pattern, 0, sizeof led_pattern);
     chamber_c = 25.0f;
     ptc_c = 25.0f;
     chamber_status = PB_NTC_OK;
     ptc_status = PB_NTC_OK;
     CHECK(pb_policy_init() == ESP_OK);
+    pb_policy_set_wake_cb(count_wake);
 }
 
 static pb_policy_snapshot_t snapshot(void)
@@ -631,6 +656,123 @@ static void test_fault_clear_requires_current_revision(void)
     CHECK(!heater_fault);
 }
 
+static void test_button_short_toggles_modes(void)
+{
+    reset_fixture();
+    pb_policy_load_params();   // manual=50, auto=60/bed100, dry=60/12h
+
+    // On -> POWER_ON at the remembered manual target, attributed to BUTTON.
+    pb_policy_on_button(PB_BUTTON_ON, PB_BUTTON_SHORT);
+    pb_policy_snapshot_t snap = snapshot();
+    CHECK(snap.mode == PB_MODE_POWER_ON);
+    CHECK(snap.source == PB_SOURCE_BUTTON);
+    CHECK(snap.requested_target_c == 50.0f);
+    CHECK(!snap.lease_active);
+    // Press again -> OFF.
+    pb_policy_on_button(PB_BUTTON_ON, PB_BUTTON_SHORT);
+    CHECK(snapshot().mode == PB_MODE_OFF);
+
+    // Auto toggles AUTO with the remembered target + threshold.
+    pb_policy_on_button(PB_BUTTON_AUTO, PB_BUTTON_SHORT);
+    snap = snapshot();
+    CHECK(snap.mode == PB_MODE_AUTO);
+    CHECK(snap.source == PB_SOURCE_BUTTON);
+    CHECK(snap.auto_bed_threshold_c == 100.0f);
+    pb_policy_on_button(PB_BUTTON_AUTO, PB_BUTTON_SHORT);
+    CHECK(snapshot().mode == PB_MODE_OFF);
+
+    // Dry toggles DRYING.
+    pb_policy_on_button(PB_BUTTON_DRY, PB_BUTTON_SHORT);
+    snap = snapshot();
+    CHECK(snap.mode == PB_MODE_DRYING);
+    CHECK(snap.drying);
+
+    // Power short is master OFF from any mode.
+    pb_policy_on_button(PB_BUTTON_POWER, PB_BUTTON_SHORT);
+    CHECK(snapshot().mode == PB_MODE_OFF);
+}
+
+static void test_button_power_short_while_off_does_not_bump_revision(void)
+{
+    reset_fixture();
+    pb_policy_load_params();
+    uint32_t rev = snapshot().state_revision;
+    pb_policy_on_button(PB_BUTTON_POWER, PB_BUTTON_SHORT);   // already OFF
+    CHECK(snapshot().state_revision == rev);                 // evlog only, no bump
+    CHECK(snapshot().mode == PB_MODE_OFF);
+}
+
+static void test_button_invalidates_remote_lease(void)
+{
+    reset_fixture();
+    pb_policy_load_params();
+    pb_policy_lease_t lease;
+    CHECK(pb_policy_set_power_on(
+        45.0f, PB_SOURCE_KLIPPER, "klippy", 1, &lease) == PB_POLICY_OK);
+    CHECK(snapshot().lease_active);
+
+    // A physical OFF must drop the lease and beat any later heartbeat.
+    pb_policy_on_button(PB_BUTTON_POWER, PB_BUTTON_SHORT);
+    CHECK(!snapshot().lease_active);
+    CHECK(pb_policy_heartbeat(&lease) == PB_POLICY_STALE_LEASE);
+    CHECK(snapshot().source == PB_SOURCE_BUTTON);
+}
+
+static void test_button_long_press_panic_off(void)
+{
+    reset_fixture();
+    pb_policy_load_params();
+    pb_policy_lease_t lease;
+    CHECK(pb_policy_set_power_on(
+        50.0f, PB_SOURCE_WEB, "tab", 1, &lease) == PB_POLICY_OK);
+    pb_policy_tick();
+    CHECK(pb_heater_is_on());
+
+    wake_calls = 0;
+    pb_policy_on_button(PB_BUTTON_AUTO, PB_BUTTON_LONG);   // any button latches
+    pb_policy_snapshot_t snap = snapshot();
+    // Attributed to BUTTON, NOT SAFETY -- this is the whole point of routing
+    // panic-off through the policy rather than a bare heater latch.
+    CHECK(snap.source == PB_SOURCE_BUTTON);
+    CHECK(snap.fault_latched);
+    CHECK(snap.mode == PB_MODE_OFF);
+    CHECK(!snap.lease_active);
+    CHECK(wake_calls == 1);                 // control task woken immediately
+
+    // The wake runs a real tick, which drops the SSR.
+    pb_policy_tick();
+    CHECK(!pb_heater_is_on());
+
+    // And the tick must NOT re-stamp the transition as SAFETY.
+    CHECK(snapshot().source == PB_SOURCE_BUTTON);
+}
+
+static void test_button_power_long_clears_or_holds_fault(void)
+{
+    reset_fixture();
+    pb_policy_load_params();
+
+    // Fault with the condition already recovered -> Power long clears it.
+    pb_heater_emergency_off("test trip");
+    pb_policy_tick();
+    CHECK(snapshot().fault_latched);
+    pb_policy_on_button(PB_BUTTON_POWER, PB_BUTTON_LONG);
+    pb_policy_tick();
+    CHECK(!snapshot().fault_latched);
+    CHECK(snapshot().mode == PB_MODE_OFF);
+
+    // Fault whose underlying condition is still unsafe -> the clear is attempted
+    // but the next tick re-latches; the device stays OFF and faulted.
+    heater_relatch = true;
+    pb_heater_emergency_off("still hot");
+    pb_policy_tick();
+    CHECK(snapshot().fault_latched);
+    pb_policy_on_button(PB_BUTTON_POWER, PB_BUTTON_LONG);
+    pb_policy_tick();
+    CHECK(snapshot().fault_latched);        // re-latched
+    CHECK(snapshot().mode == PB_MODE_OFF);
+}
+
 int main(void)
 {
     test_boot_is_off();
@@ -650,6 +792,11 @@ int main(void)
     test_params_persist_canonical_post_clamp_value();
     test_params_failed_write_stays_dirty_and_retries();
     test_params_survive_reboot_but_mode_does_not();
+    test_button_short_toggles_modes();
+    test_button_power_short_while_off_does_not_bump_revision();
+    test_button_invalidates_remote_lease();
+    test_button_long_press_panic_off();
+    test_button_power_long_clears_or_holds_fault();
     puts("pb_policy host tests: PASS");
     return 0;
 }

@@ -210,6 +210,22 @@ void pb_heater_emergency_off(const char *reason)   // control-task context
     ESP_LOGW(TAG, "EMERGENCY OFF: %s", reason ? reason : "(unspecified)");
 }
 
+void pb_heater_request_panic_off(const char *reason)   // any task
+{
+    // Latch only — NO GPIO write. Unlike pb_heater_emergency_off(), this is safe
+    // to call off the control task (e.g. the button task): it preserves the
+    // single-SSR-writer invariant by leaving the actual ssr_set(false) to the
+    // next pb_heater_tick() on the control task. Callers that need the SSR down
+    // fast should wake the control task immediately after this returns.
+    taskENTER_CRITICAL(&s_mux);
+    s_target_c = 0.0f;
+    s_latched_off = true;
+    s_fault_reason = reason ? reason : "panic-off";
+    taskEXIT_CRITICAL(&s_mux);
+    ESP_LOGW(TAG, "PANIC-OFF requested: %s (SSR drops next tick)",
+             reason ? reason : "(unspecified)");
+}
+
 void pb_heater_clear_fault(void)
 {
     taskENTER_CRITICAL(&s_mux);

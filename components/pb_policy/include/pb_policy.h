@@ -12,6 +12,7 @@
 
 #include "esp_err.h"
 #include "pb_ntc.h"
+#include "pb_buttons.h"
 
 #define PB_POLICY_REVISION_ANY UINT32_MAX
 #define PB_POLICY_LEASE_ID_LEN 32
@@ -163,6 +164,29 @@ pb_policy_result_t pb_policy_clear_fault(
 // applies the heater/fan outputs, enforces deadlines, and synchronizes safety
 // trips back into the authoritative state.
 void pb_policy_tick(void);
+
+// Front-panel button handler.  Short presses toggle the button's labeled mode
+// (re-arming from the remembered parameters); a 2 s long press latches a
+// "panic-off", except a long press on Power while faulted attempts a fault
+// clear.  Every button action is source=BUTTON, invalidates the remote lease,
+// and bumps the revision -- so a physical action always wins over stale remote
+// ownership.  Runs on the button task; must not be called holding any policy
+// lock.
+void pb_policy_on_button(pb_button_id_t id, pb_button_event_t ev);
+
+// Latch heater + policy OFF from any task and attribute it to `source`.  Unlike
+// the tick's generic safety sync, this stamps the transition itself (so a button
+// panic-off reports source=BUTTON, not SAFETY) and invalidates the lease
+// immediately.  The registered wake callback fires afterward so the control task
+// drops the SSR without waiting for the next periodic tick.
+void pb_policy_request_panic_off(pb_source_t source, const char *reason);
+
+// Callback invoked (outside any policy lock) whenever the policy needs the
+// control task to run a tick promptly -- currently only after a panic-off.  Keep
+// it ISR-light: a single task notification.  Optional; if unset, the change is
+// picked up on the next periodic tick.
+typedef void (*pb_policy_wake_fn)(void);
+void pb_policy_set_wake_cb(pb_policy_wake_fn fn);
 
 void pb_policy_get_snapshot(pb_policy_snapshot_t *out);
 pb_mode_t pb_policy_get_mode(void);

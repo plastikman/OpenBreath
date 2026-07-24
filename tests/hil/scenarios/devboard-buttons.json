@@ -1,0 +1,131 @@
+{
+  "name": "devboard front-panel buttons",
+  "targets": ["devboard"],
+  "steps": [
+    {
+      "name": "inject nominal chamber sensor",
+      "send": {"cmd": "sensor", "channel": "chamber", "status": "ok", "temp_c": 25}
+    },
+    {
+      "name": "inject nominal PTC sensor",
+      "send": {"cmd": "sensor", "channel": "ptc", "status": "ok", "temp_c": 25}
+    },
+    {
+      "name": "boot is off and no button is pressed",
+      "send": {"cmd": "state"},
+      "expect": {
+        "ok": true,
+        "state.mode": "off",
+        "state.io.buttons.on": false
+      }
+    },
+
+    {
+      "name": "On button pressed (level low)",
+      "send": {"cmd": "button", "id": "on", "level": 0}
+    },
+    {"name": "let debounce settle", "wait_s": 0.1},
+    {
+      "name": "On button debounced pressed",
+      "send": {"cmd": "state"},
+      "expect": {"ok": true, "state.io.buttons.on": true}
+    },
+    {
+      "name": "On button released -> short press arms POWER_ON from BUTTON",
+      "send": {"cmd": "button", "id": "on", "level": 1}
+    },
+    {"name": "let release settle + control tick", "wait_s": 0.7},
+    {
+      "name": "manual heat armed by button",
+      "send": {"cmd": "state"},
+      "expect": {
+        "ok": true,
+        "state.mode": "power_on",
+        "state.source": "button",
+        "state.heater_output": true,
+        "state.io.buttons.on": false
+      }
+    },
+
+    {
+      "name": "On pressed again (toggle off) - press",
+      "send": {"cmd": "button", "id": "on", "level": 0}
+    },
+    {"name": "settle", "wait_s": 0.1},
+    {
+      "name": "On released - toggles OFF",
+      "send": {"cmd": "button", "id": "on", "level": 1}
+    },
+    {"name": "settle + tick", "wait_s": 0.7},
+    {
+      "name": "manual mode toggled off",
+      "send": {"cmd": "state"},
+      "expect": {"ok": true, "state.mode": "off", "state.heater_output": false}
+    },
+
+    {
+      "name": "Dry short press arms DRYING",
+      "send": {"cmd": "button", "id": "dry", "level": 0}
+    },
+    {"name": "settle", "wait_s": 0.1},
+    {"name": "Dry release", "send": {"cmd": "button", "id": "dry", "level": 1}},
+    {"name": "settle + tick", "wait_s": 0.7},
+    {
+      "name": "drying armed from button",
+      "send": {"cmd": "state"},
+      "expect": {"ok": true, "state.mode": "drying", "state.source": "button"}
+    },
+
+    {
+      "name": "arm remote heat to prove a button invalidates the lease",
+      "send": {"cmd": "mode", "mode": "power_on", "target_c": 50},
+      "expect": {"ok": true, "state.lease_active": true},
+      "save": {"lease": "lease_id"}
+    },
+    {"name": "control tick", "wait_s": 0.7},
+
+    {
+      "name": "Auto long-press: press",
+      "send": {"cmd": "button", "id": "auto", "level": 0}
+    },
+    {"name": "hold past the 2 s long-press threshold", "wait_s": 2.3},
+    {
+      "name": "panic-off latched, attributed to BUTTON not SAFETY",
+      "send": {"cmd": "state"},
+      "expect": {
+        "ok": true,
+        "state.mode": "off",
+        "state.source": "button",
+        "state.fault_latched": true,
+        "state.heater_output": false,
+        "state.lease_active": false,
+        "state.fan_percent": 100
+      }
+    },
+    {
+      "name": "the panic-off invalidated the remote lease",
+      "send": {"cmd": "heartbeat", "lease_id": "$lease"},
+      "expect": {"ok": false, "result": "stale_lease"}
+    },
+    {"name": "release the Auto button", "send": {"cmd": "button", "id": "auto", "level": 1}},
+    {"name": "settle", "wait_s": 0.1},
+
+    {
+      "name": "Power long-press while faulted attempts a clear",
+      "send": {"cmd": "button", "id": "power", "level": 0}
+    },
+    {"name": "hold past the long-press threshold", "wait_s": 2.3},
+    {"name": "release Power", "send": {"cmd": "button", "id": "power", "level": 1}},
+    {"name": "settle + tick", "wait_s": 0.7},
+    {
+      "name": "fault cleared, device idle at off",
+      "send": {"cmd": "state"},
+      "expect": {
+        "ok": true,
+        "state.mode": "off",
+        "state.fault_latched": false,
+        "state.heater_output": false
+      }
+    }
+  ]
+}

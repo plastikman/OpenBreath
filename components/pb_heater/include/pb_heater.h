@@ -71,7 +71,17 @@ void pb_heater_tick(void);
 
 // Immediate, latching shutoff. Clears the target and latches off. Heat stays off
 // until pb_heater_clear_fault() is called AND the condition has cleared.
+// CONTROL-TASK ONLY: it writes the SSR GPIO directly, so calling it from another
+// task would break the single-SSR-writer invariant. Off-task callers use
+// pb_heater_request_panic_off() instead.
 void pb_heater_emergency_off(const char *reason);
+
+// Latch the heater off from ANY task without touching the SSR GPIO. Sets the
+// same latch/target/reason as emergency_off but leaves the physical drop to the
+// next pb_heater_tick() (control task), so the single-writer invariant holds.
+// Used by the front-panel long-press ("panic-off"). To minimize the drop
+// latency, wake the control task immediately after calling this.
+void pb_heater_request_panic_off(const char *reason);
 
 // Explicitly clear a latched safety fault (over-temp / sensor fault / comms loss).
 // Setting a new target does NOT auto-clear it — this is a deliberate reset. The

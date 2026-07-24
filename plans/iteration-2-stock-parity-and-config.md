@@ -17,12 +17,15 @@ Decisions locked with the user: **phased plan**, **all four buttons usable**
 **AUTO mode included**, **one authoritative device-side state machine**, and
 **breaking alpha API changes are acceptable**.
 
-> **Status (2026-07-23):** Phase 0 ✅ (v0.2.0) · Phase A ✅ (v0.3.0) · Phase B ✅ shipped
+> **Status (2026-07-24):** Phase 0 ✅ (v0.2.0) · Phase A ✅ (v0.3.0) · Phase B ✅ shipped
 > in v0.3.0 & hardware-validated — **except B2** (thermal-purge + NVS-persisted fault
-> latch), deferred · Phase C ⬜ not started (buttons — all 4 pins mapped, ready to build) · Phase D 🟡 partial (v2 dashboard
-> covers D2/D3; D4 parity matrix documented; D1 shell open) · Phase E 🟡 partial (release/build CI +
-> host tests + UART dev-board HIL qualified; broader static-analysis/sim and real-Panda matrix open). **Next candidates:** B2
-> safety hardening, Phase C button, or Phase D1 dashboard polish.
+> latch), deferred; **B5's params-only NVS persistence, mismarked done in v0.3.0, actually
+> shipped in the Phase C series** · Phase C 🟡 code complete, in review (LED semantics, B5
+> params, and all four buttons landed as three stacked PRs; on-device bench sign-off pending)
+> · Phase D 🟡 partial (v2 dashboard covers D2/D3; D4 parity matrix documented; D1 shell open)
+> · Phase E 🟡 partial (release/build CI + host tests + UART dev-board HIL qualified; broader
+> static-analysis/sim and real-Panda matrix open). **Next candidates:** B2 safety hardening,
+> Phase C bench sign-off, or Phase D1 dashboard polish.
 
 Not covered / explicitly out of scope: stock OEM WebSocket protocol + web UI,
 Bambu binding, and the stock `filtertemp`/`heater_temp` auto parameters
@@ -117,7 +120,8 @@ added alongside `POST /settings` (bounds + current values in one read); `max_uri
 >
 > - **Done:** **B1** pb_policy is the sole mode/target writer (snapshots + monotonic revisions
 >   + source enum) · **B3** AUTO follow-bed (`bed_threshold_c` 40–120 °C, hysteresis) · **B4**
->   DRYING (1–12 h, timer auto-off) · **B5** boot-OFF, params-only NVS persistence · **B6**
+>   DRYING (1–12 h, timer auto-off) · **B5** boot-OFF (the params-only NVS *persistence* half
+>   was NOT actually in v0.3.0 despite this line — it shipped later, in the Phase C series) · **B6**
 >   device-issued lease + stale-lease rejection · **B7** API v2 (`/api/v2/info|state|health|events(SSE)|command|heartbeat`;
 >   alpha `/status`,`/target`,`/heartbeat`,`/reset` removed) · **B8** local POWER_ON 12 h cap ·
 >   **B9** dashboard + helper consume the snapshot/SSE stream.
@@ -265,14 +269,20 @@ transport/state adapter.
 
 ## Phase C — Physical buttons (all four)
 
-> 🚧 **Not started; pins mapped & ready.** Live probe (2026-07-23) confirmed **4
-> active-low buttons: Power=GPIO9, Auto=GPIO8, On=GPIO10, Dry=GPIO2** (idle high via
-> pull-up, pressed low) — this supersedes the old "K3-only" scope. LED-ownership
-> prerequisite is already satisfied (`pb_leds` owns the mode LEDs GPIO4/5/6 and, in
-> release builds, Power/GPIO21). **Boot-strap caveat:** Power(9)/Auto(8)/Dry(2) are
-> strapping pins (GPIO9 = ROM download-mode) — don't hold a button at power-on;
-> On(10) is the only non-strap. No runtime code currently configures or reads
-> these inputs; without `pb_buttons`, every physical press is a no-op.
+> 🟡 **Code complete; in review; bench sign-off pending.** Delivered as three stacked
+> PRs off `main`: **(1)** LED mode semantics — all four LEDs driven from the policy
+> snapshot (Power = device-alive/fault, On/Auto/Dry = active mode, Auto slow-blinks
+> when armed-but-waiting); **(2)** B5's remembered mode parameters (`md_last`,
+> `md_auto_tgt`, `md_auto_bed`, `md_dry_tgt`, `md_dry_hrs`) persisted via a serialized
+> worker and exposed as `params` in API v2 — the B5 gap v0.3.0 left open; **(3)**
+> `pb_buttons` (poll/debounce/short-long, host-tested `pb_buttons_sm`), `pb_heater_request_panic_off`
+> (latch-only), a policy-level panic-off attributed to BUTTON with an immediate
+> control-task wake, and `pb_policy_on_button`. Live probe (2026-07-23) confirmed the
+> **4 active-low buttons: Power=GPIO9, Auto=GPIO8, On=GPIO10, Dry=GPIO2**. **Boot-strap
+> caveat:** Power(9)/Auto(8)/Dry(2) are strapping pins (GPIO9 = ROM download-mode) —
+> the driver ignores a button held at power-on until it releases; On(10) is the only
+> non-strap. **Still open:** the on-device bench checklist below, incl. the < 20 ms
+> panic-off latency measurement.
 
 **C1. `pb_buttons` (new component).** Port `pv_button`'s state machine (10 ms poll task, 20 ms debounce, long-press 2 s) behind a per-button table with an `active_low` field. v1 table = **all four**: `PB_GPIO_BTN_POWER`=9, `_AUTO`=8, `_ON`=10, `_DRY`=2 — each `GPIO_MODE_INPUT` + internal **pull-up** (never pull-down — 9/8/2 are straps that must be high at reset), poll-only. API `pb_buttons_start(cb)`, `pb_button_cb_t(id, ev)` with `id ∈ {POWER, AUTO, ON, DRY}`; SHORT on release, LONG once (suppress trailing short). REQUIRES `driver pb_board` (decoupled — no heater/policy link).
 

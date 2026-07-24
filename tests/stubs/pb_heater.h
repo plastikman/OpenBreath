@@ -13,6 +13,7 @@ uint32_t pb_heater_get_comms_timeout_ms(void);
 void pb_heater_notify_link_alive(void);
 void pb_heater_tick(void);
 void pb_heater_emergency_off(const char *reason);
+void pb_heater_request_panic_off(const char *reason);
 void pb_heater_clear_fault(void);
 bool pb_heater_is_inhibited(void);
 bool pb_heater_is_faulted(void);

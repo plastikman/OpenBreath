@@ -26,7 +26,7 @@ if grep -q '^#define CONFIG_PB_POWER_LED 1$' "$config"; then
     exit 1
 fi
 
-for component in pb_board pb_heater pb_fan pb_leds; do
+for component in pb_board pb_heater pb_fan pb_leds pb_buttons; do
     archive="$build_dir/esp-idf/$component/lib$component.a"
     if [ ! -f "$archive" ]; then
         echo "missing HIL component archive: $archive" >&2

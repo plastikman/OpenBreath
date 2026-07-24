@@ -33,8 +33,8 @@ OEM parity → [`docs/OEM_PARITY.md`](docs/OEM_PARITY.md) · hardware →
 | `pb_policy` | ✅ Authoritative mode/target/lease state machine |
 | Network core: `pv_wifi` / `pv_evlog` / `pv_moonraker` | ✅ Referenced from OpenVent (submodule); WiFi + Moonraker validated on hardware |
 | Portal / status dashboard | ✅ Captive provisioning + v2 dashboard (manual / auto / dry / advanced cards, SSE-driven) |
-| Status LEDs (`pb_leds`) | 🚧 Four-output pattern driver works; On + release-only Power indicate armed heat/fault. Auto/Dry mode indication is not wired to policy yet. |
-| Front-panel buttons | 🚧 All four inputs are mapped and live-probed; no runtime button driver, debounce, or actions exist yet. |
+| Status LEDs (`pb_leds`) | ✅ All four driven from policy: Power = device-alive/fault, On/Auto/Dry = active mode (Auto slow-blinks when armed but waiting). |
+| Front-panel buttons (`pb_buttons`) | ✅ All four polled with debounce + short/long-press; short toggles the labeled mode, 2 s long-press = panic-off (Power-long while faulted = fault clear). Bench sign-off pending. |
 | HTTP control API (`pb_httpd`) | ✅ API v2 (JSON command/state + SSE, CSRF-gated) — shipped in v0.3.0 |
 | Klipper-side helper (M141 / Fluidd) | ✅ [dragonbreath-klipper](https://github.com/plastikman/dragonbreath-klipper) migrated to API v2; deploy lockstep with firmware ≥ v0.3.0 |
 | Auto (follow-bed) / filament-dry modes | 🚧 Shipped in the state machine + UI (v0.3.0); end-to-end hardware soak in progress |
@@ -150,6 +150,12 @@ First boot with no stored WiFi starts an `DragonBreath_XXXX` AP + captive portal
 provisioning. The AP password is **`987654321`** (same as the stock Panda). Connect
 to it and a browser should pop the setup page automatically (or open `http://192.168.4.1`).
 
+> ⚠️ **Don't hold a front-panel button while powering the board on.** Power, Auto,
+> and Dry sit on ESP32-C3 strapping pins (GPIO9 is ROM download-mode); a held
+> button pulls its strap low at reset and the board won't boot normally.
+> DragonBreath also ignores any button already down at power-on until you release
+> it. On (GPIO10) is the only button on a non-strapping pin.
+
 **Updating DragonBreath:** once running, open the **Firmware update** link on the
 status page (the `/fw` page) and upload `build/dragonbreath.bin` (or the
 `dragonbreath-<ver>.bin` app image from a release). The image lands in
@@ -166,6 +172,7 @@ components/
   pb_heater/   SSR control + safety cutoffs + comms watchdog
   pb_fan/      TRIAC on/off held-gate blower control (never PWM)
   pb_policy/   authoritative control state, modes, leases -> actuators
+  pb_buttons/  front-panel button poll/debounce + short/long-press
   pb_hil/      JSON serial HIL console + safe dev-board injection
   pb_httpd/    HTTP control API (CSRF-gated mutations)
   pb_portal/   captive-portal provisioning + live status dashboard

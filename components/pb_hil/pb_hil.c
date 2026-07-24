@@ -7,6 +7,7 @@
 #include "pb_leds.h"
 #include "pb_ntc.h"
 #include "pb_policy.h"
+#include "pb_buttons.h"
 
 #include "cJSON.h"
 #ifdef CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG
@@ -123,6 +124,15 @@ static cJSON *state_json(void)
     cJSON_AddStringToObject(leds, "auto", led_pattern_str(pb_leds_get(PB_LED_AUTO)));
     cJSON_AddStringToObject(leds, "on", led_pattern_str(pb_leds_get(PB_LED_ON)));
     cJSON_AddStringToObject(leds, "dry", led_pattern_str(pb_leds_get(PB_LED_DRY)));
+#ifdef CONFIG_PB_HIL_DEVBOARD
+    // Debounced button states, so a scenario can confirm an injected level
+    // actually settled through the state machine before asserting an action.
+    cJSON *buttons = cJSON_AddObjectToObject(io, "buttons");
+    cJSON_AddBoolToObject(buttons, "power", pb_buttons_hil_pressed(PB_BUTTON_POWER));
+    cJSON_AddBoolToObject(buttons, "auto", pb_buttons_hil_pressed(PB_BUTTON_AUTO));
+    cJSON_AddBoolToObject(buttons, "on", pb_buttons_hil_pressed(PB_BUTTON_ON));
+    cJSON_AddBoolToObject(buttons, "dry", pb_buttons_hil_pressed(PB_BUTTON_DRY));
+#endif
     return state;
 }
 
@@ -167,6 +177,16 @@ static bool parse_ntc_status(const char *name, pb_ntc_status_t *status)
     else if (strcmp(name, "open") == 0) *status = PB_NTC_OPEN;
     else if (strcmp(name, "short") == 0) *status = PB_NTC_SHORT;
     else if (strcmp(name, "uninit") == 0) *status = PB_NTC_UNINIT;
+    else return false;
+    return true;
+}
+
+static bool parse_button_id(const char *name, pb_button_id_t *id)
+{
+    if (strcmp(name, "power") == 0) *id = PB_BUTTON_POWER;
+    else if (strcmp(name, "auto") == 0) *id = PB_BUTTON_AUTO;
+    else if (strcmp(name, "on") == 0) *id = PB_BUTTON_ON;
+    else if (strcmp(name, "dry") == 0) *id = PB_BUTTON_DRY;
     else return false;
     return true;
 }
@@ -297,6 +317,23 @@ static void handle_request(const cJSON *request)
             return;
         }
         pb_fan_hil_zero_cross((uint32_t)count, (uint32_t)interval_us);
+        cJSON_AddBoolToObject(response, "ok", true);
+    } else if (strcmp(cmd->valuestring, "button") == 0) {
+        // Inject a RAW electrical level so the real debounce/long-press timing
+        // in pb_buttons runs -- scenarios drive levels + waits, not events.
+        const cJSON *id_item = cJSON_GetObjectItemCaseSensitive(request, "id");
+        double level = 0.0;
+        pb_button_id_t id;
+        bool valid = cJSON_IsString(id_item)
+            && json_number(request, "level", &level)
+            && (level == 0.0 || level == 1.0)
+            && parse_button_id(id_item->valuestring, &id);
+        if (!valid) {
+            response_error(response, "invalid_button");
+            emit(response);
+            return;
+        }
+        pb_buttons_hil_set_level(id, (int)level);
         cJSON_AddBoolToObject(response, "ok", true);
 #endif
     } else {

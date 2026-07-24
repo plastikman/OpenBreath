@@ -25,7 +25,9 @@
 #include "pb_fan.h"
 #include "pb_policy.h"
 #include "pb_leds.h"
+#include "pb_buttons.h"
 #include "pb_hil.h"
+#include "pv_evlog.h"
 
 #include "esp_wifi.h"
 #include "esp_mac.h"
@@ -56,6 +58,23 @@ static volatile bool s_net_up = false;
 // Set true only if pv_moonraker_start() succeeded — never query a client that
 // failed to initialize (its internal state/mutex may be unset).
 static volatile bool s_mk_up = false;
+
+// Control-task handle, so a policy panic-off (from the button task) can wake the
+// loop immediately instead of waiting up to a full tick to drop the SSR.
+static TaskHandle_t s_control_task;
+
+// pb_policy wake callback: a single notification. Runs on whatever task
+// requested the panic-off (the button task); keep it minimal.
+static void control_wake(void)
+{
+    if (s_control_task) xTaskNotifyGive(s_control_task);
+}
+
+// Thin adapter: the button driver's event -> the policy handler.
+static void button_cb(pb_button_id_t id, pb_button_event_t ev)
+{
+    pb_policy_on_button(id, ev);
+}
 
 // Brand the captive-portal AP as "DragonBreath_XXXX". The shared pv_wifi reads the
 // AP SSID from NVS (key "ap_ssid"), so we override its "OpenVent_" default this way
@@ -153,7 +172,7 @@ static void seed_dev_config(void)
 static void control_task(void *arg)
 {
     const TickType_t period = pdMS_TO_TICKS(PB_TICK_PERIOD_MS);
-    TickType_t last = xTaskGetTickCount();
+    TickType_t next_deadline = xTaskGetTickCount() + period;
     int dbg = 0;
 
     // Subscribe this task to the task watchdog so a hung control loop panics
@@ -201,7 +220,25 @@ static void control_task(void *arg)
                 pv_printer_state_str(st.printer), st.bed_temp,
                 (unsigned long)zc, (unsigned long)zciv);
         }
-        vTaskDelayUntil(&last, period);
+
+        // Wait for the next periodic deadline, but wake early on a notification
+        // (a policy panic-off). Guardrails so notifications can never drag or
+        // accelerate the safety schedule: the deadline is ABSOLUTE; a notify
+        // wake runs one extra full tick against the SAME deadline; only a
+        // timeout advances it (with an overrun resync). Every wake, notified or
+        // timed out, runs the complete pb_policy_tick() above — there is no
+        // partial "just drop the SSR" path. The watchdog is fed only after that
+        // successful tick, so an extra iteration keeps coverage armed.
+        TickType_t now = xTaskGetTickCount();
+        TickType_t wait = (next_deadline > now) ? (next_deadline - now) : 0;
+        uint32_t notified = ulTaskNotifyTake(pdTRUE, wait);
+        if (notified == 0) {          // periodic timeout: advance one period
+            next_deadline += period;
+            now = xTaskGetTickCount();
+            if ((TickType_t)(next_deadline - now) > period)   // overran: resync
+                next_deadline = now + period;
+        }
+        // notified != 0: run again immediately, deadline unchanged.
     }
 }
 
@@ -209,19 +246,22 @@ void app_main(void)
 {
     ESP_LOGI(TAG, "DragonBreath starting");
 
+    pv_evlog_init();
     pb_board_init();
     ESP_ERROR_CHECK(pb_heater_init());     // SSR forced OFF before anything else
     ESP_ERROR_CHECK(pb_ntc_init());
     ESP_ERROR_CHECK(pb_fan_init());
     ESP_ERROR_CHECK(pb_policy_init());
     ESP_ERROR_CHECK(pb_leds_start());       // indicator LEDs (pb_policy drives them)
-#ifdef CONFIG_PB_HIL_CONSOLE
-    ESP_ERROR_CHECK(pb_hil_start());
-#endif
 
     // Start the safety/telemetry loop FIRST — it must run regardless of the
-    // network coming up (a blocking/hung network stack must never stop it).
-    xTaskCreate(control_task, "pb_control", 4096, NULL, 10, NULL);
+    // network coming up (a blocking/hung network stack must never stop it). The
+    // SSR is already forced off by pb_heater_init(), so nothing can arm heat
+    // before this; there is no need to start command inputs (buttons/HIL) any
+    // earlier, and doing so would let a press arm a target before this task —
+    // the sole actuator — is even running.
+    xTaskCreate(control_task, "pb_control", 4096, NULL, 10, &s_control_task);
+    pb_policy_set_wake_cb(control_wake);     // panic-off can now wake the loop
     ESP_LOGI(TAG, "control loop running; heater held OFF (bring-up: no auto-heat)");
 
     // Bring up networking. If a start call blocks under a flaky link, the control
@@ -229,6 +269,13 @@ void app_main(void)
     nvs_init();
     pb_heater_load_config();                 // apply persisted max-target + comms timeout (NVS is up now)
     pb_policy_load_params();                 // remembered mode params (never a mode/target — boot stays OFF)
+
+    // Command inputs come up AFTER the actuator task and the remembered params:
+    // a button press arms a mode from those params, so both must exist first.
+    ESP_ERROR_CHECK(pb_buttons_start(button_cb));
+#ifdef CONFIG_PB_HIL_CONSOLE
+    ESP_ERROR_CHECK(pb_hil_start());
+#endif
 #ifndef CONFIG_PB_HIL_DEVBOARD
     brand_ap();                              // AP name = DragonBreath_XXXX
 #if defined(DB_WIFI_SSID) || defined(DB_MOONRAKER_HOST)

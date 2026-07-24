@@ -8,6 +8,23 @@ below into the GitHub Release notes.
 ## [Unreleased]
 
 ### Added
+- **Front-panel buttons (`pb_buttons`).** All four buttons (Power, Auto, On, Dry)
+  are polled at 10 ms with 20 ms debounce and short/long-press detection. A short
+  press toggles that button's labeled mode, arming it from the remembered
+  parameters; a 2 s long-press latches a **panic-off**. A long-press on Power
+  while a fault is latched attempts a fault clear instead. Every button action is
+  attributed to the panel, invalidates any remote control lease, and appears in
+  both the dashboard and Klipper. A button held at power-on (or a shorted line)
+  is ignored until it releases — Power/Auto/Dry are ESP32-C3 strapping pins, so
+  **do not hold a front-panel button while the board boots**. The debounce /
+  long-press state machine is split into a dependency-free `pb_buttons_sm` unit
+  and host-tested directly.
+- **Long-press panic-off.** `pb_heater_request_panic_off()` latches the heater
+  off from any task without touching the SSR GPIO, and the policy drives the full
+  OFF transition (attributed to the button, lease invalidated) then wakes the
+  control task by notification so the SSR drops on the very next scheduling rather
+  than at the next periodic tick. It is **not** a safety-rated emergency stop —
+  see [`docs/SAFETY.md`](docs/SAFETY.md).
 - **Remembered mode parameters (persisted).** The last accepted manual target,
   automatic target and bed threshold, and drying target and duration are now
   stored in NVS and reported as `params` in `GET /api/v2/state`, so the UI
