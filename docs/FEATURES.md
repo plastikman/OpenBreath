@@ -1,8 +1,7 @@
 # DragonBreath — feature set
 
 Current as of **v0.3.0**. Open ESP-IDF firmware for the BIGTREETECH Panda Breath
-(ESP32-C3) chamber heater, replacing the stock cloud integration with
-Moonraker/Klipper + local web control.
+(ESP32-C3) chamber heater with Moonraker/Klipper + local web control.
 
 See [`OEM_PARITY.md`](OEM_PARITY.md) for the explicit implemented/planned/
 intentionally-changed feature matrix.
@@ -58,11 +57,23 @@ fixed over-temp cutoffs are not settable.
 
 Four front-panel LEDs, matching the stock panel (direct active-high GPIO):
 
-- **Power** (GPIO21) and **On** (GPIO5) — solid while heating, blink on a latched
-  fault, off at idle. Because GPIO21 is also the console-TX pin, the Power LED is
-  driven only in **release builds** (`CONFIG_PB_POWER_LED`); development builds
-  keep the serial console and leave it alone.
-- **Auto** (GPIO6) / **Dry** (GPIO4) — mode indicators.
+- The driver supports OFF, solid, fast/slow blink, and pulse-code patterns on
+  all four mapped outputs.
+- **On** (GPIO5), plus **Power** (GPIO21) in release builds, are currently solid
+  whenever a heat target is armed (including thermostat-off portions of the
+  cycle), blink on a latched fault, and are off otherwise.
+- **Auto** (GPIO6) and **Dry** (GPIO4) are initialized off but currently receive
+  no mode updates from policy, so they remain off.
+- GPIO21 is also console TX. Development builds leave it as serial output;
+  release builds enable `CONFIG_PB_POWER_LED` and use it for the Power LED.
+
+## Front-panel buttons
+
+The four active-low inputs have been live-probed and mapped: Power GPIO9, Auto
+GPIO8, On GPIO10, and Dry GPIO2. That mapping is the full extent of today's
+implementation: there is no button GPIO initialization, polling task, debounce,
+short/long-press detection, or policy callback, so button presses currently do
+nothing. Phase C defines the proposed behavior and hardware-validation gates.
 
 ## Fan
 
@@ -109,6 +120,13 @@ watchdog.
 the host-side helper (Klipper `extras`): exposes the chamber as a heater for
 `M141` / `M191` and Fluidd, speaks API v2 (SSE + exact-lease heartbeats,
 reactor-safe). Deploy lockstep with firmware ≥ v0.3.0.
+
+DragonBreath also reads printer/bed state directly from Moonraker for AUTO mode.
+The stock firmware can likewise obtain bed temperature from Moonraker in
+Klipper mode, or from a Bambu printer over Bambu MQTT. Stock v1.0.4 additionally
+exposes Panda Breath state/control through Home Assistant MQTT. DragonBreath
+intentionally implements the Klipper/Moonraker path only; none of these stock
+paths require a vendor cloud.
 
 ## Platform / release
 

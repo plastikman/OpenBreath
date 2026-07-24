@@ -134,6 +134,9 @@ added alongside `POST /settings` (bounds + current values in one read); `max_uri
 > - **LEDs (from Phase A, finalized here):** the panel is 4 direct active-high GPIOs
 >   (Power=GPIO21 — the console-TX pin, so release-only via `CONFIG_PB_POWER_LED`+`sdkconfig.release`;
 >   Auto=6/On=5/Dry=4), *not* a 3-LED set — determined by stock-firmware RE.
+>   The current policy drives only On + release-only Power (solid while a target
+>   is armed, blinking on fault). Auto and Dry remain off until Phase C assigns
+>   their mode/button semantics.
 
 **Delivery split.** Land this phase as a stacked series so safety/control review
 is not mixed with HTTP parsing:
@@ -268,7 +271,8 @@ transport/state adapter.
 > prerequisite is already satisfied (`pb_leds` owns the mode LEDs GPIO4/5/6 and, in
 > release builds, Power/GPIO21). **Boot-strap caveat:** Power(9)/Auto(8)/Dry(2) are
 > strapping pins (GPIO9 = ROM download-mode) — don't hold a button at power-on;
-> On(10) is the only non-strap.
+> On(10) is the only non-strap. No runtime code currently configures or reads
+> these inputs; without `pb_buttons`, every physical press is a no-op.
 
 **C1. `pb_buttons` (new component).** Port `pv_button`'s state machine (10 ms poll task, 20 ms debounce, long-press 2 s) behind a per-button table with an `active_low` field. v1 table = **all four**: `PB_GPIO_BTN_POWER`=9, `_AUTO`=8, `_ON`=10, `_DRY`=2 — each `GPIO_MODE_INPUT` + internal **pull-up** (never pull-down — 9/8/2 are straps that must be high at reset), poll-only. API `pb_buttons_start(cb)`, `pb_button_cb_t(id, ev)` with `id ∈ {POWER, AUTO, ON, DRY}`; SHORT on release, LONG once (suppress trailing short). REQUIRES `driver pb_board` (decoupled — no heater/policy link).
 

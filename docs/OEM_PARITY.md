@@ -15,12 +15,12 @@ Current as of **v0.3.0**.
 | Sensor-fault and over-temperature shutdown | **Implemented** | Heater fails closed; fixed 85 °C chamber and 105 °C PTC cutoffs are not user-configurable. |
 | Fan follows heater | **Implemented** | TRIAC is held on/off and never phase-angle PWM'd. |
 | Residual-heat fan purge | **Partial** | Current cooldown is session-gated. A persisted, opt-in temperature-latched policy is planned; the default will remain session-gated so a warm idle chamber does not start the fan unexpectedly. Fault airflow remains unconditional. |
-| Front-panel mode LEDs | **Implemented** | Power/On indicate heat and fault; Auto/Dry indicate mode. Power LED is release-build-only because GPIO21 shares console TX. |
-| Front-panel buttons | **Planned** | All four inputs are mapped: Power GPIO9, Auto GPIO8, On GPIO10, Dry GPIO2. Button policy and debounce are Phase C work. |
+| Front-panel mode LEDs | **Partial** | The four-output pattern driver is implemented. On, plus release-only Power, are solid while a heat target is armed and blink on fault. Auto/Dry are initialized off but receive no policy updates yet. |
+| Front-panel buttons | **Planned (mapped only)** | Power GPIO9, Auto GPIO8, On GPIO10, and Dry GPIO2 were live-probed active-low. No GPIO setup, polling, debounce, event handling, or actions exist today; presses do nothing until Phase C. |
 | Local status/configuration UI | **Implemented** | Responsive work continues, but manual, automatic, drying, safety settings, setup, and OTA controls are present. |
 | Wi-Fi captive setup and mDNS | **Implemented** | Product identity is DragonBreath; reachable as `dragonbreath.local` when mDNS works. |
-| Firmware update | **Implemented differently** | Local authenticated OTA with image identity checks and rollback; no vendor cloud is required. |
-| Printer integration | **Implemented differently** | Moonraker/Klipper replaces the OEM Bambu/cloud integration. |
+| Firmware update | **Implemented** | Like stock, DragonBreath accepts a local firmware upload from its Web UI. DragonBreath additionally authenticates the write, verifies project identity, refuses updates while heating, and uses dual-slot rollback. |
+| Printer integration | **Implemented for Klipper** | Both stock and DragonBreath can read Klipper bed state through Moonraker. DragonBreath also exposes heater control through its Klipper helper/API v2. Stock additionally supports Bambu MQTT and Home Assistant MQTT; DragonBreath intentionally focuses on Moonraker/Klipper. |
 | Home Assistant MQTT discovery | **Intentionally omitted** | DragonBreath uses HTTP/JSON plus Server-Sent Events; no MQTT broker is required. |
 | Stock WebSocket API and Web UI | **Intentionally omitted** | API v2 and the DragonBreath dashboard are the supported interfaces. |
 | Boot/resume active heating | **Intentionally changed** | DragonBreath always boots OFF and never restores active heat, timers, or leases after reboot. |
