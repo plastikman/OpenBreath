@@ -48,6 +48,9 @@ jobs:
       - name: Test authoritative policy state machine
         run: sh tests/run_policy_host_test.sh
 
+      - name: Test sensor-calibration safety clamp (set + NVS-load bound)
+        run: sh tests/run_ntc_calibration_host_test.sh
+
       - name: Test HIL scenario runner
         run: python3 -m unittest tests/test_hil_runner.py
 

@@ -17,6 +17,9 @@ routes require `X-DragonBreath-Auth`; the device does not enable CORS.
   and when `state_revision` changes. A full `telemetry` snapshot is sent every
   two seconds between transitions. At most two streams are held concurrently.
 - `GET /api/v2/health` — uptime, heap, Wi-Fi RSSI/channel and SSE client count.
+- `GET /api/v2/logs` — the in-memory event ring (newest first) as
+  `{"api_version":2,"count":N,"entries":[{"ms":<millis since boot>,"text":"…"}]}`.
+  Open (read-only, no side effects).
 
 The complete snapshot, not locally remembered intent, is the source of truth:
 
@@ -173,13 +176,41 @@ Defined error codes include `invalid_command`, `unsupported_api_version`,
 These predate/sit beside the versioned control surface and are stable:
 
 - `GET /settings` — the runtime-configurable safety settings plus their bounds:
-  `{"max","max_min","max_abs","comms_ms","comms_ms_min","comms_ms_max"}`. Open
-  (read-only, no side effects).
-- `POST /settings?max=<°C>&comms_ms=<ms>` — update either/both. Auth-gated
-  (`X-DragonBreath-Auth`). Values are clamped to the safe envelope server-side
-  (the max-target ceiling can never exceed the absolute cap, the comms watchdog
-  stays within its min/max) and the clamped effective values are echoed back.
-  The fixed 105 °C PTC / 85 °C chamber cutoffs are **not** settable.
+  `{"max","max_min","max_abs","comms_ms","comms_ms_min","comms_ms_max","leds_enabled"}`.
+  Open (read-only, no side effects). `leds_enabled` is the status-LED master
+  enable (bool, default `true`).
+- `POST /settings?max=<°C>&comms_ms=<ms>&leds_enabled=<0|1>` — update any subset.
+  Auth-gated (`X-DragonBreath-Auth`). Safety values are clamped to the safe
+  envelope server-side (the max-target ceiling can never exceed the absolute cap,
+  the comms watchdog stays within its min/max) and the clamped effective values
+  are echoed back. `leds_enabled=0` turns the four front-panel LEDs off (monitoring
+  and safety are unaffected). The fixed 105 °C PTC / 85 °C chamber cutoffs are
+  **not** settable.
+- `GET /api/v2/calibration` — the per-channel temperature calibration offsets plus
+  their bounds and the live readings:
+  `{"api_version":2,"chamber_offset_c","ptc_offset_c","min":-5,"max":5,"chamber_c","ptc_c","chamber_raw_c","ptc_raw_c"}`.
+  Open (read-only). `*_c` are the calibrated readings; `*_raw_c` are the
+  pre-offset readings.
+- `POST /api/v2/calibration` — auth-gated. Body
+  `{"chamber_offset_c":<°C>,"ptc_offset_c":<°C>}` (either optional; at least one
+  required). Each offset is **hard-clamped to ±5 °C** and persisted; the clamped
+  effective offsets are echoed back. The offset is applied to the reading used by
+  the display, control, AUTO **and** the over-temp cutoffs alike — so the fixed
+  cutoffs shift by at most 5 °C and calibration can never disable a fault
+  (see `docs/SAFETY.md`).
+- `POST /api/v2/restart` — authenticated soft reboot. **Refused while the heater
+  is armed/on** (HTTP 409 `heater_active`). Returns `{"ok":true}` then reboots
+  once the response has flushed.
+- `POST /api/v2/factory-reset` — authenticated. **Refused while heating.** Requires
+  explicit confirmation `confirm=factory-reset` (query or urlencoded body) or it
+  returns HTTP 400 `confirmation_required`. On confirm it erases the whole
+  `app_nvs` namespace (Wi-Fi credentials, Moonraker host, control token, safety
+  limits), returns `{"ok":true}`, and reboots — the device comes back up in AP
+  provisioning mode.
+- `POST /api/v2/token` — authenticated. Body `{"token":"<=64 chars>"}` sets the
+  control token; `{"token":""}` / `{"token":null}` / `{}` clears it. The secret is
+  never echoed; the response is `{"ok":true,"token_set":<bool>}`. Once a token is
+  set, every mutating request must carry it in `X-DragonBreath-Auth`.
 - `POST /update` — authenticated DragonBreath application-image OTA. Streams the
   `.bin` into the inactive slot, verifies it (image checksum + `dragonbreath`
   project identity — foreign images are rejected), reports the SHA-256 it

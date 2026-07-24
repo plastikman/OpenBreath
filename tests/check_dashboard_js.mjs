@@ -1,20 +1,26 @@
 import fs from "node:fs";
 
-const source = fs.readFileSync(
-  new URL("../components/pb_portal/pb_portal.c", import.meta.url),
+// The dashboard/control UI is now the embedded SPA (app.html), not a C string.
+const html = fs.readFileSync(
+  new URL("../components/pb_portal/www/app.html", import.meta.url),
   "utf8",
 );
-const start = source.indexOf("static const char STATUS_BODY[]");
-const end = source.indexOf("// Dedicated firmware-update page", start);
-if (start < 0 || end < 0) throw new Error("STATUS_BODY not found");
 
-const block = source.slice(start, end);
-const tokens = block.match(/"(?:\\.|[^"\\])*"/gs) ?? [];
-const html = tokens.map((token) => Function(`return ${token}`)()).join("");
-const script = html.match(/<script>([\s\S]*)<\/script>/)?.[1];
-if (!script) throw new Error("dashboard script not found");
+const scripts = [...html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/g)].map(
+  (m) => m[1],
+);
+if (!scripts.length) throw new Error("dashboard script not found");
 
-// DB_AUTH_JS is a C macro between string tokens, so its helpers are absent from
-// the extracted text. They are runtime dependencies, not syntax dependencies.
-Function("tok", "hdr", script);
+// Syntax-check each inline script (compile only; never executed). The token
+// helpers are runtime dependencies, not syntax dependencies.
+for (const script of scripts) {
+  new Function(script);
+}
+
+// Guard against duplicate element ids in the served markup.
+const ids = [...html.matchAll(/\bid="([^"]+)"/g)].map((m) => m[1]);
+const seen = new Set();
+const dup = ids.find((id) => seen.has(id) || (seen.add(id), false));
+if (dup) throw new Error(`duplicate element id: ${dup}`);
+
 console.log("dashboard JavaScript syntax: PASS");
