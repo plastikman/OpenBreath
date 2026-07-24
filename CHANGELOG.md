@@ -7,6 +7,29 @@ below into the GitHub Release notes.
 
 ## [Unreleased]
 
+### Added
+- **Phase E hardening — CI static-analysis gate + broader host/simulation fault
+  coverage.** No firmware runtime behavior change; this is tests, CI, and small
+  behavior-preserving refactors only.
+  - **cppcheck static analysis** runs on every PR over `components/` + `main/`,
+    failing the build on any error/warning/performance/portability finding. The one
+    unmodellable false positive (a GNU `asm()` label on an extern binary-blob symbol
+    in `pb_portal`) is suppressed inline with justification; the genuine finding it
+    surfaced — a `%u`/`int` format-type mismatch in the Moonraker WebSocket URI — was
+    fixed with a value-identical cast.
+  - **Warnings-as-errors for our own code.** `-Wall -Wextra -Werror` is applied
+    PRIVATE to every first-party `pb_*` component (never to ESP-IDF's own
+    components), enforced by the default, HIL, and release builds.
+  - **Two new host tests** wired into CI as required steps:
+    `pb_heater_safety_host_test` covers the heater safety-trip priority ladder
+    (PTC/chamber over-temp, fail-closed on a non-OK sensor while armed, comms-loss
+    watchdog); `pb_ntc_status_host_test` covers the NTC open/short/rail fail-status
+    mapping. The existing `pb_buttons` host test is now also run in CI.
+  - **Two safety decisions factored into pure, unit-tested inlines** (behavior
+    identical, single authoritative definition): `pb_heater_eval_trip()` — the exact
+    ladder `pb_heater_tick()` runs — and `pb_ntc_classify()` — the exact
+    open/short/rail classifier `pb_ntc_read()` runs.
+
 ## [0.6.1] - 2026-07-24
 
 ### Changed

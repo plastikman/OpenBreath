@@ -25,9 +25,11 @@ Decisions locked with the user: **phased plan**, **all four buttons usable**
 > devboard-HIL functional benches passed — only the optional scope-grade panic-off
 > latency trace remains, and it is non-blocking characterization)
 > · Phase D 🟡 partial (v2 dashboard covers D2/D3; D4 parity matrix documented; D1 shell open)
-> · Phase E 🟡 partial (release/build CI + host tests + UART dev-board HIL qualified; broader
-> static-analysis/sim and real-Panda matrix open). **Next candidates:** B2 safety hardening
-> or Phase D1 dashboard polish.
+> · Phase E 🟡 partial (E1 static-analysis gate + E2 host/sim fault coverage landing in
+> v0.7.0: cppcheck + warnings-as-errors on our components, heater safety-trip and NTC
+> status-classify host tests; E3/E4 dev-board HIL tooling qualified; only native-USB
+> runtime diagnosis and the real-Panda release matrix remain — hardware steps).
+> **Next candidates:** Phase D1 dashboard shell, or the real-Panda HIL sign-off.
 
 Not covered / explicitly out of scope: stock OEM WebSocket protocol + web UI,
 Bambu binding, and the stock `filtertemp`/`heater_temp` auto parameters
@@ -390,17 +392,38 @@ enhancement, not required parity until OEM behavior confirms it.
 
 ## Phase E — Static analysis, simulation + hardware-in-loop
 
-> 🟡 **Partial.** **E1** in progress: firmware-build + release CI (SHA-pinned actions,
-> least-privilege perms) and host-side tests exist (`pb_policy` host test, `check_api_v2_contract.sh`,
-> dashboard JS check, HIL runner tests). **E3/E4 tooling is implemented:** isolated
-> native-USB/UART dev-board and UART Panda profiles, compile-time no-op Panda mains backends,
-> JSON serial injection/state, scripted suites, console capture, and JSON reports.
-> The full dev-board suite is hardware-qualified over its CH341-family UART bridge;
-> native-USB runtime diagnosis and the real-Panda release matrix remain open.
-> **Open:** the fuller **E1** gate (warnings-as-errors, formatting,
-> static analysis, dependency validation on every PR), **E2** broad host/sim fault coverage
-> (corrupt NVS, reconnect storms, malformed API, OTA rollback), native-USB runtime
-> qualification, and real-Panda physical HIL sign-off.
+> 🟡 **Partial.** **E1 static-analysis gate + E2 host/sim fault coverage land in v0.7.0.**
+> CI (`firmware-build.yml`, SHA-pinned actions, least-privilege perms) now runs, on every
+> PR: the full host-test suite (`pb_policy`, `pb_buttons`, `pb_ntc` calibration **and**
+> status-classify, `pb_heater` fault-restore **and** safety-trip), the API v2 contract +
+> dashboard-ownership checks, the HIL runner tests, **cppcheck** static analysis over
+> `components/` + `main/` (fails on any error/warning/perf/portability finding), and the
+> ESP-IDF default + HIL builds — the latter with **`-Wall -Wextra -Werror` applied
+> PRIVATE to every first-party `pb_*` component** (release build likewise, in
+> `release.yml`). **E3/E4 tooling is implemented:** isolated native-USB/UART dev-board and
+> UART Panda profiles, compile-time no-op Panda mains backends, JSON serial injection/state,
+> scripted suites, console capture, and JSON reports; the dev-board suite is
+> hardware-qualified over its CH341-family UART bridge.
+>
+> **E2 coverage added (v0.7.0):** the heater safety-trip priority ladder (over-temp on
+> either sensor, fail-closed on a non-OK/open/short/uninit thermistor while armed,
+> comms-loss watchdog) is now a pure, host-tested inline (`pb_heater_eval_trip`); the NTC
+> open/short/rail fail-status mapping is a pure, host-tested inline (`pb_ntc_classify`).
+> Both are extractions of the exact runtime logic (no behavior change), so the safety
+> decisions have one authoritative, unit-tested definition. Sensor open/short/NaN
+> handling, timer/deadline expiry, stale leases, conflicting controllers, persistent-fault
+> recovery, and the residual-heat purge were already covered by the policy/fault/calibration
+> host tests.
+>
+> **Open (all remaining items are hardware or out-of-band):** dependency-lock diff
+> validation is **N/A** here — `dependencies.lock` is `.gitignored` (generated, not
+> committed), so there is nothing to drift; the build re-solves + validates deps against
+> the pinned manifests every run. A repo-wide clang-format reformat is deliberately **not**
+> done (it would bury this diff). Corrupt-NVS / reconnect-storm / malformed-API /
+> OTA-rollback simulations that need the full component or a device remain host-unreachable
+> as pure logic (OTA rollback is delegated to ESP-IDF's app-rollback, no first-party
+> decision to unit-test). Native-USB runtime qualification and the **real-Panda physical
+> HIL sign-off** remain — both require hardware.
 
 **E1. CI/static analysis.** Run warnings-as-errors, formatting, static analysis,
 dependency validation, host-side unit tests, frontend validation, and API/schema
