@@ -180,7 +180,43 @@ svg.icon{ width: 20px; height: 20px; fill: none; stroke: currentColor;
 .page-only p{ max-width: 520px; color: var(--muted-foreground); }
 .page-only .stub-note{ margin-top: 14px; font-size: 12px; color: var(--muted-foreground); }
 .main[data-page]:not([data-page="home"]) .grid{ display: none; }
-.main[data-page]:not([data-page="home"]) .page-only{ display: block; }
+/* Route to the one page-only whose data-page-content matches the active rail tab. */
+.main[data-page="manual"]   [data-page-content="manual"],
+.main[data-page="auto"]     [data-page-content="auto"],
+.main[data-page="dry"]      [data-page-content="dry"],
+.main[data-page="settings"] [data-page-content="settings"]{ display: flex; }
+
+/* ---- U2 control screens: touch-first steppers, sliders, presets, one action. ---- */
+.mode-controls{ flex-direction: column; gap: 12px; max-width: 540px; width: 100%; }
+.ctl-group{ display: flex; flex-direction: column; gap: 7px; }
+.ctl-head{ display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.ctl-head .form-label{ margin: 0; color: var(--muted-foreground); font-size: 12px;
+  font-weight: 600; text-transform: uppercase; }
+.ctl-head .ctl-hint{ color: var(--muted-foreground); font-size: 11px; }
+.touch-adjust{ display: grid; grid-template-columns: 52px minmax(90px,1fr) 52px;
+  align-items: center; gap: 8px; }
+.step-btn{ min-height: 48px; height: 48px; padding: 0; }
+.step-btn svg.icon{ width: 22px; height: 22px; }
+.touch-value{ display: flex; align-items: baseline; justify-content: center; gap: 4px;
+  font-size: 30px; font-weight: 500; line-height: 1; }
+.touch-value span{ color: var(--muted-foreground); font-size: 14px; font-weight: 400; }
+.presets{ display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+.presets .btn{ gap: 5px; }
+.mode-status{ display: flex; align-items: center; gap: 8px; min-height: 20px;
+  color: var(--muted-foreground); font-size: 12px; }
+.mode-status svg.icon{ width: 16px; height: 16px; flex: none; }
+.mode-status.is-warn{ color: var(--destructive); }
+.mode-status.is-live{ color: var(--foreground); }
+.mode-action{ margin-top: 2px; }
+.mode-action .btn{ min-height: 46px; font-size: 15px; gap: 7px; }
+.btn-danger{ border-color: transparent; color: var(--primary-foreground);
+  background: var(--destructive); }
+.btn-danger:not(:disabled):hover{ background: color-mix(in srgb, var(--destructive) 82%, transparent); }
+.mode-feedback{ min-height: 16px; margin-top: 2px; font-size: 12px; color: var(--muted-foreground); }
+.mode-feedback.is-error{ color: var(--destructive); }
+.mode-feedback.is-ok{ color: var(--viz-series-2); }
+.settings-links{ display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.settings-links .btn{ gap: 6px; text-decoration: none; }
 
 /* ---- Compact tile (~439x329) + narrow iframe: prioritize temp/PTC/state/graph/Stop. ---- */
 @container (max-width: 600px){
@@ -198,9 +234,16 @@ svg.icon{ width: 20px; height: 20px; fill: none; stroke: currentColor;
   .ptc-reading strong{ font-size: 14px; }
   .quick-card{ display: none; }        /* secondary controls hidden when compact */
   .summary{ font-size: 11px; }
-  .ptc-reading, .target{ display: none; }
+  .target{ display: none; }   /* keep PTC visible in compact; drop only secondary copy */
   .page-only{ height: calc(100% - 28px); padding: 10px; }
   .page-only > p{ display: none; }
+  .mode-controls{ gap: 8px; }
+  .touch-adjust{ grid-template-columns: 46px minmax(70px,1fr) 46px; gap: 6px; }
+  .step-btn{ min-height: 42px; height: 42px; }
+  .touch-value{ font-size: 24px; }
+  .mode-action .btn{ min-height: 42px; font-size: 14px; }
+  .presets{ grid-template-columns: repeat(3, 1fr); }
+  .ctl-head .ctl-hint{ display: none; }
 }
 </style>
 </head>
@@ -214,6 +257,14 @@ svg.icon{ width: 20px; height: 20px; fill: none; stroke: currentColor;
   <symbol id="i-settings" viewBox="0 0 24 24"><path d="M20 7h-9"/><path d="M14 17H5"/><circle cx="17" cy="17" r="3"/><circle cx="7" cy="7" r="3"/></symbol>
   <symbol id="i-thermometer" viewBox="0 0 24 24"><path d="M14 4v10.54a4 4 0 1 1-4 0V4a2 2 0 0 1 4 0z"/></symbol>
   <symbol id="i-power" viewBox="0 0 24 24"><path d="M12 2v10"/><path d="M18.4 6.6a9 9 0 1 1-12.8 0"/></symbol>
+  <symbol id="i-minus" viewBox="0 0 24 24"><path d="M5 12h14"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+  <symbol id="i-play" viewBox="0 0 24 24"><path d="M6 3l14 9-14 9z"/></symbol>
+  <symbol id="i-square" viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="14" rx="2"/></symbol>
+  <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+  <symbol id="i-alert" viewBox="0 0 24 24"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/></symbol>
+  <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M5 21h14"/></symbol>
+  <symbol id="i-wifi" viewBox="0 0 24 24"><path d="M5 12.5a10 10 0 0 1 14 0"/><path d="M8.5 16a5 5 0 0 1 7 0"/><path d="M12 20h.01"/></symbol>
 </svg>
 
 <div class="app" data-state="off" data-online="0">
@@ -265,6 +316,7 @@ svg.icon{ width: 20px; height: 20px; fill: none; stroke: currentColor;
           <div class="state"><i class="state-light"></i><span id="db-status">--</span></div>
           <div class="summary" id="db-summary"></div>
           <div class="actions">
+            <button class="btn btn-sm" type="button" id="db-clear" hidden><svg class="icon"><use href="#i-refresh"/></svg> Clear fault</button>
             <button class="btn btn-primary btn-sm" type="button" id="db-stop" disabled><svg class="icon"><use href="#i-power"/></svg> Stop</button>
           </div>
         </section>
@@ -280,13 +332,115 @@ svg.icon{ width: 20px; height: 20px; fill: none; stroke: currentColor;
         </section>
       </div>
 
-      <!-- Stub screens for Manual / Automatic / Dry / Settings. Routable now;
-           wired to the control surface in phases U2 (manual/auto/dry) and U3-U4
-           (settings). Kept intentionally minimal. -->
-      <section class="page-only">
-        <h3 id="db-page-heading">Manual heat</h3>
-        <p id="db-page-copy"></p>
-        <p class="stub-note" id="db-stub-note">This screen arrives in a later update. Use the Dashboard quick presets to heat now.</p>
+      <!-- U2 control screens: Manual / Automatic / Dry. Each reads live values via
+           apply(state) and issues v2 commands. Settings remains a U3/U4 stub. -->
+
+      <!-- Manual: power_on at a chosen chamber target. -->
+      <section class="page-only mode-controls" data-page-content="manual">
+        <p>Set a chamber target and heat directly until you stop it.</p>
+        <div class="ctl-group">
+          <div class="ctl-head">
+            <span class="form-label">Target temperature</span>
+            <span class="ctl-hint" data-maxhint>30–70 °C</span>
+          </div>
+          <div class="touch-adjust">
+            <button class="btn step-btn" type="button" data-step="man,-1" aria-label="Decrease target"><svg class="icon"><use href="#i-minus"/></svg></button>
+            <output class="touch-value" id="m-value">50 <span>°C</span></output>
+            <button class="btn step-btn" type="button" data-step="man,1" aria-label="Increase target"><svg class="icon"><use href="#i-plus"/></svg></button>
+          </div>
+          <input class="form-range" id="m-range" type="range" min="30" max="70" step="1" value="50" aria-label="Target temperature">
+        </div>
+        <div class="presets" aria-label="Quick targets">
+          <button class="btn btn-sm" type="button" data-preset="man,40">40 °C</button>
+          <button class="btn btn-sm" type="button" data-preset="man,50">50 °C</button>
+          <button class="btn btn-sm" type="button" data-preset="man,60">60 °C</button>
+          <button class="btn btn-sm" type="button" data-preset="man,70">70 °C</button>
+        </div>
+        <div class="mode-status" id="m-status"></div>
+        <div class="mode-action"><button class="btn btn-primary btn-block" type="button" id="m-action"><svg class="icon"><use href="#i-play"/></svg> <span>Start heating</span></button></div>
+        <div class="mode-feedback" id="m-msg" role="status" aria-live="polite"></div>
+      </section>
+
+      <!-- Automatic: follow the printer bed above a threshold (auto command). -->
+      <section class="page-only mode-controls" data-page-content="auto">
+        <p>Follow the printer bed: arm a chamber target that engages once the bed passes a threshold. Requires Moonraker.</p>
+        <div class="ctl-group">
+          <div class="ctl-head">
+            <span class="form-label">Chamber target</span>
+            <span class="ctl-hint" data-maxhint>30–70 °C</span>
+          </div>
+          <div class="touch-adjust">
+            <button class="btn step-btn" type="button" data-step="autoT,-1" aria-label="Decrease chamber target"><svg class="icon"><use href="#i-minus"/></svg></button>
+            <output class="touch-value" id="a-value">50 <span>°C</span></output>
+            <button class="btn step-btn" type="button" data-step="autoT,1" aria-label="Increase chamber target"><svg class="icon"><use href="#i-plus"/></svg></button>
+          </div>
+          <input class="form-range" id="a-range" type="range" min="30" max="70" step="1" value="50" aria-label="Chamber target">
+        </div>
+        <div class="ctl-group">
+          <div class="ctl-head">
+            <span class="form-label">Bed threshold</span>
+            <span class="ctl-hint">40–120 °C</span>
+          </div>
+          <div class="touch-adjust">
+            <button class="btn step-btn" type="button" data-step="autoB,-5" aria-label="Decrease bed threshold"><svg class="icon"><use href="#i-minus"/></svg></button>
+            <output class="touch-value" id="a-bed-value">100 <span>°C</span></output>
+            <button class="btn step-btn" type="button" data-step="autoB,5" aria-label="Increase bed threshold"><svg class="icon"><use href="#i-plus"/></svg></button>
+          </div>
+          <input class="form-range" id="a-bed-range" type="range" min="40" max="120" step="1" value="100" aria-label="Bed threshold">
+        </div>
+        <div class="mode-status" id="a-status"></div>
+        <div class="mode-action"><button class="btn btn-primary btn-block" type="button" id="a-action"><svg class="icon"><use href="#i-refresh"/></svg> <span>Follow printer bed</span></button></div>
+        <div class="mode-feedback" id="a-msg" role="status" aria-live="polite"></div>
+      </section>
+
+      <!-- Dry: timed drying cycle (drying_start / drying_stop). -->
+      <section class="page-only mode-controls" data-page-content="dry">
+        <p>Run a timed filament-drying cycle at a chosen temperature.</p>
+        <div class="presets" aria-label="Material presets">
+          <button class="btn btn-sm" type="button" data-drypreset="45,6">PLA 45° 6h</button>
+          <button class="btn btn-sm" type="button" data-drypreset="65,4">PETG 65° 4h</button>
+          <button class="btn btn-sm" type="button" data-drypreset="70,4">ABS 70° 4h</button>
+          <button class="btn btn-sm" type="button" data-drypreset="55,8">Nylon 55° 8h</button>
+        </div>
+        <div class="ctl-group">
+          <div class="ctl-head">
+            <span class="form-label">Target temperature</span>
+            <span class="ctl-hint" data-maxhint>30–70 °C</span>
+          </div>
+          <div class="touch-adjust">
+            <button class="btn step-btn" type="button" data-step="dryT,-1" aria-label="Decrease target"><svg class="icon"><use href="#i-minus"/></svg></button>
+            <output class="touch-value" id="d-value">60 <span>°C</span></output>
+            <button class="btn step-btn" type="button" data-step="dryT,1" aria-label="Increase target"><svg class="icon"><use href="#i-plus"/></svg></button>
+          </div>
+          <input class="form-range" id="d-range" type="range" min="30" max="70" step="1" value="60" aria-label="Target temperature">
+        </div>
+        <div class="ctl-group">
+          <div class="ctl-head">
+            <span class="form-label">Duration</span>
+            <span class="ctl-hint">1–12 hours</span>
+          </div>
+          <div class="touch-adjust">
+            <button class="btn step-btn" type="button" data-step="dryH,-1" aria-label="Decrease hours"><svg class="icon"><use href="#i-minus"/></svg></button>
+            <output class="touch-value" id="d-hours-value">6 <span>h</span></output>
+            <button class="btn step-btn" type="button" data-step="dryH,1" aria-label="Increase hours"><svg class="icon"><use href="#i-plus"/></svg></button>
+          </div>
+          <input class="form-range" id="d-hours-range" type="range" min="1" max="12" step="1" value="6" aria-label="Duration hours">
+        </div>
+        <div class="mode-status" id="d-status"></div>
+        <div class="mode-action"><button class="btn btn-primary btn-block" type="button" id="d-action"><svg class="icon"><use href="#i-play"/></svg> <span>Start drying</span></button></div>
+        <div class="mode-feedback" id="d-msg" role="status" aria-live="polite"></div>
+      </section>
+
+      <!-- Settings: intentionally left as a U3/U4 stub. Do not wire here. -->
+      <section class="page-only" data-page-content="settings" style="flex-direction:column">
+        <h3 id="db-page-heading">Settings</h3>
+        <p id="db-page-copy">Network, sensor calibration, safety limits, LEDs, integrations, logs, and firmware updates.</p>
+        <!-- Reach the existing setup/OTA pages until the full U3 Settings screen lands. -->
+        <div class="settings-links">
+          <a class="btn" href="/setup"><svg class="icon"><use href="#i-wifi"/></svg> Wi-Fi &amp; printer</a>
+          <a class="btn" href="/fw"><svg class="icon"><use href="#i-download"/></svg> Firmware update</a>
+        </div>
+        <p class="stub-note" id="db-stub-note">Full settings arrive in a later update.</p>
       </section>
     </main>
   </div>
@@ -385,19 +539,28 @@ svg.icon{ width: 20px; height: 20px; fill: none; stroke: currentColor;
 
     /* Stop enabled only while a mode is running. */
     $('db-stop').disabled = s.mode==='off';
+    /* Clear-fault affordance appears only while a fault is latched. */
+    $('db-clear').hidden = !s.safety.fault_latched;
 
     /* Drop our lease if it is no longer the active POWER_ON lease we own. */
     if(!l.active || !lease || l.owner!==actor) lease=null;
 
+    syncControls(s);   /* U2: keep Manual/Automatic/Dry screens live-bound */
     setConn(true);
   }
 
   /* ---- Commands (auth-gated mutations). ---- */
-  function request(path, body){
+  function request(path, body, retried){
     return fetch(path, {method:'POST', headers:hdr(), body:JSON.stringify(body)}).then(function(r){
       return r.json().catch(function(){return {};}).then(function(j){
-        if(r.status===403){ localStorage.removeItem('db_tok');
-          var t=prompt('DragonBreath control token'); if(t) localStorage.setItem('db_tok', t); }
+        /* A configured control token rejects the 'web' sentinel with 403. Prompt for
+           the real token and retry this exact request once so the first command is
+           not silently lost (request_id is unchanged -> idempotent on the device). */
+        if(r.status===403 && !retried){
+          localStorage.removeItem('db_tok');
+          var t=prompt('DragonBreath control token');
+          if(t){ localStorage.setItem('db_tok', t); return request(path, body, true); }
+        }
         if(j.state) apply(j.state);
         if(!r.ok) throw j;
         return j;
@@ -439,24 +602,15 @@ svg.icon{ width: 20px; height: 20px; fill: none; stroke: currentColor;
     es.onerror=function(){ es.close(); setConn(false); if(!seen) poll(); else setTimeout(poll,1000); };
   }
 
-  /* ---- Navigation: rail tabs. Home = live Dashboard; others are U2-U4 stubs. ---- */
-  var pages={
-    home:    {title:'Dashboard'},
-    manual:  {title:'Manual heat',    copy:'Set a chamber target and control heater output directly.'},
-    auto:    {title:'Automatic mode', copy:'Follow printer activity using a bed-temperature threshold.'},
-    dry:     {title:'Dry cycle',      copy:'Run a timed filament-drying cycle at a chosen temperature.'},
-    settings:{title:'Settings',       copy:'Network, sensor calibration, safety limits, LEDs, integrations, logs, and firmware updates.'}
-  };
+  /* ---- Navigation: rail tabs. Home = live Dashboard; manual/auto/dry = U2 control
+     screens; settings = U3/U4 stub. CSS routes the matching page-only section. ---- */
+  var pageTitles={ home:'Dashboard', manual:'Manual heat', auto:'Automatic mode', dry:'Dry cycle', settings:'Settings' };
   document.querySelectorAll('.tab').forEach(function(tab){
     tab.addEventListener('click', function(){
-      var page=tab.dataset.page, cfg=pages[page];
-      $('db-title').textContent = cfg.title;
+      var page=tab.dataset.page;
+      $('db-title').textContent = pageTitles[page] || 'Dashboard';
       document.querySelector('.main').dataset.page = page;
       document.querySelectorAll('.tab').forEach(function(t){ t.setAttribute('aria-selected', String(t===tab)); });
-      if(page!=='home'){
-        $('db-page-heading').textContent = cfg.title;
-        $('db-page-copy').textContent = cfg.copy;
-      }
     });
   });
 
@@ -468,6 +622,136 @@ svg.icon{ width: 20px; height: 20px; fill: none; stroke: currentColor;
   /* Status-area action: Stop -> off (the policy has no pause state; per #19 the
      status area is Stop-only). */
   $('db-stop').addEventListener('click', setOff);
+  $('db-clear').addEventListener('click', function(){ command('clear_fault', {}).catch(function(){}); });
+
+  /* ===== U2: Manual / Automatic / Dry control screens =========================
+     Client edit-state for the touch steppers/sliders. Each field re-syncs from the
+     authoritative snapshot in apply() unless the user has "touched" it since the
+     last sync/submit, so a physical or remote change flows through to the screens
+     while an in-progress edit is preserved. Bounds mirror the firmware policy:
+     targets 30..maximum_c, bed threshold 40..120, dry hours 1..12. ---------- */
+  var maxC = 70;                 // runtime target ceiling from state.target.maximum_c
+  var prevMode = null;           // clear "touched" on a real mode transition
+  var touched = {};
+  var fields = {
+    man:   { val:50,  vId:'m-value',       rId:'m-range' },
+    autoT: { val:50,  vId:'a-value',       rId:'a-range' },
+    autoB: { val:100, vId:'a-bed-value',   rId:'a-bed-range' },
+    dryT:  { val:60,  vId:'d-value',       rId:'d-range' },
+    dryH:  { val:6,   vId:'d-hours-value', rId:'d-hours-range' }
+  };
+  function fMin(k){ return k==='autoB' ? 40 : k==='dryH' ? 1 : 30; }
+  function fMax(k){ return k==='autoB' ? 120 : k==='dryH' ? 12 : maxC; }
+  function renderField(k){
+    var f=fields[k], v=$(f.vId), r=$(f.rId);
+    if(v && v.firstChild) v.firstChild.textContent = f.val+' ';
+    if(r){ r.min=fMin(k); r.max=fMax(k); r.value=f.val; }
+  }
+  function setField(k, val, byUser){
+    if(val==null || !isFinite(val)) return;
+    fields[k].val = Math.max(fMin(k), Math.min(fMax(k), Math.round(val)));
+    if(byUser) touched[k]=1;
+    renderField(k);
+  }
+
+  function fmtDur(sec){
+    sec=Math.max(0, Math.round(sec||0));
+    var h=Math.floor(sec/3600), m=Math.floor((sec%3600)/60);
+    return h>0 ? h+' h '+m+' min' : m+' min';
+  }
+  function setAction(id, label, icon, danger){
+    var b=$(id); if(!b) return;
+    b.querySelector('span').textContent = label;
+    b.querySelector('use').setAttribute('href', icon);
+    b.classList.toggle('btn-danger', !!danger);
+    b.classList.toggle('btn-primary', !danger);
+  }
+  function setStatus(id, text, mod){ var e=$(id); if(!e){return;} e.className='mode-status'+(mod?' '+mod:''); e.textContent=text; }
+
+  function renderManual(s){
+    var run = s.mode==='power_on';
+    setAction('m-action', run?'Stop':'Start heating', run?'#i-square':'#i-play', run);
+    if(run) setStatus('m-status', 'Heating to '+Math.round(s.target.effective_c)+' °C.', 'is-live');
+    else if(s.safety.inhibited || s.safety.fault_latched) setStatus('m-status', 'Safety chain not ready.', 'is-warn');
+    else setStatus('m-status', 'Heater is off.');
+  }
+  function renderAuto(s){
+    var armed = s.mode==='auto', eng = s.environment.auto_engaged;
+    setAction('a-action', armed?'Disengage':'Follow printer bed', armed?'#i-square':'#i-refresh', armed);
+    var bed = s.environment.bed_temperature_c;
+    var bedTxt = bed==null ? '--' : Number(bed).toFixed(1)+' °C';
+    if(!s.environment.moonraker_connected) setStatus('a-status', 'Moonraker not connected — AUTO needs a printer link.', 'is-warn');
+    else if(eng) setStatus('a-status', 'Engaged — following bed ('+bedTxt+').', 'is-live');
+    else if(armed) setStatus('a-status', 'Armed — bed '+bedTxt+', engages at '+Math.round(s.environment.auto_bed_threshold_c)+' °C.', 'is-live');
+    else setStatus('a-status', 'Bed '+bedTxt+'. Not armed.');
+  }
+  function renderDry(s){
+    var active = s.drying.active;
+    setAction('d-action', active?'Stop drying':'Start drying', active?'#i-square':'#i-play', active);
+    if(active) setStatus('d-status', 'Drying at '+Math.round(s.target.effective_c)+' °C — '+fmtDur(s.drying.remaining_seconds)+' left.', 'is-live');
+    else setStatus('d-status', 'Idle.');
+  }
+
+  /* Called from apply(): fold the authoritative snapshot into the control screens. */
+  function syncControls(s){
+    if(s.target && isFinite(s.target.maximum_c) && s.target.maximum_c>0) maxC = s.target.maximum_c;
+    document.querySelectorAll('[data-maxhint]').forEach(function(e){ e.textContent = '30–'+Math.round(maxC)+' °C'; });
+
+    if(prevMode!==s.mode){ touched={}; prevMode=s.mode; }   // remote/physical mode change wins
+    var pr = s.params||{}, rq = s.target ? s.target.requested_c : null;
+    if(!touched.man)   setField('man',   s.mode==='power_on' ? rq : pr.manual_target_c);
+    if(!touched.autoT) setField('autoT', s.mode==='auto'     ? rq : pr.auto_target_c);
+    if(!touched.autoB) setField('autoB', s.mode==='auto' ? s.environment.auto_bed_threshold_c : pr.auto_bed_threshold_c);
+    if(!touched.dryT)  setField('dryT',  s.mode==='drying'   ? rq : pr.dry_target_c);
+    if(!touched.dryH)  setField('dryH',  pr.dry_hours);
+    /* Keep any touched target within the (possibly lowered) live ceiling. */
+    ['man','autoT','dryT'].forEach(function(k){ renderField(k); setField(k, fields[k].val); });
+
+    renderManual(s); renderAuto(s); renderDry(s);
+  }
+
+  /* Command feedback line under each screen's primary action. */
+  function flash(id, msg, mod){
+    var e=$(id); if(!e) return;
+    e.className='mode-feedback'+(mod?' '+mod:''); e.textContent=msg;
+    if(mod==='is-ok'){ clearTimeout(e._t); e._t=setTimeout(function(){ if(e.textContent===msg){ e.textContent=''; e.className='mode-feedback'; } }, 2500); }
+  }
+  function runCmd(msgId, promise){
+    flash(msgId, 'Sending…');
+    return promise.then(function(){ flash(msgId, 'Applied.', 'is-ok'); })
+      .catch(function(j){ flash(msgId, 'Rejected: '+((j&&(j.message||j.error))||'command failed'), 'is-error'); });
+  }
+
+  /* Steppers (data-step="key,delta"), sliders, and presets all edit client state. */
+  document.querySelectorAll('[data-step]').forEach(function(b){
+    b.addEventListener('click', function(){ var p=b.dataset.step.split(','); setField(p[0], fields[p[0]].val+Number(p[1]), true); });
+  });
+  [['man','m-range'],['autoT','a-range'],['autoB','a-bed-range'],['dryT','d-range'],['dryH','d-hours-range']].forEach(function(p){
+    var r=$(p[1]); if(r) r.addEventListener('input', function(){ setField(p[0], Number(r.value), true); });
+  });
+  document.querySelectorAll('[data-preset]').forEach(function(b){
+    b.addEventListener('click', function(){ var p=b.dataset.preset.split(','); setField(p[0], Number(p[1]), true); });
+  });
+  document.querySelectorAll('[data-drypreset]').forEach(function(b){
+    b.addEventListener('click', function(){ var p=b.dataset.drypreset.split(','); setField('dryT', Number(p[0]), true); setField('dryH', Number(p[1]), true); });
+  });
+
+  /* Primary actions -> v2 commands. Start toggles to Stop when the mode is live. */
+  $('m-action').addEventListener('click', function(){
+    if(last && last.mode==='power_on'){ lease=null; runCmd('m-msg', command('off', {})); }
+    else { lease=null; runCmd('m-msg', command('power_on', {target_c:fields.man.val}).then(function(r){ lease=r.lease_id||null; touched.man=0; })); }
+  });
+  $('a-action').addEventListener('click', function(){
+    if(last && last.mode==='auto'){ runCmd('a-msg', command('off', {})); }
+    else runCmd('a-msg', command('auto', {target_c:fields.autoT.val, bed_threshold_c:fields.autoB.val}).then(function(){ touched.autoT=0; touched.autoB=0; }));
+  });
+  $('d-action').addEventListener('click', function(){
+    if(last && last.drying && last.drying.active){ runCmd('d-msg', command('drying_stop', {})); }
+    else runCmd('d-msg', command('drying_start', {target_c:fields.dryT.val, hours:fields.dryH.val}).then(function(){ touched.dryT=0; touched.dryH=0; }));
+  });
+
+  /* Initial paint before the first snapshot arrives. */
+  Object.keys(fields).forEach(renderField);
 
   /* Firmware version in the brand tooltip (device info; no server-side injection). */
   fetch('/api/v2/info').then(function(r){ return r.json(); }).then(function(i){
