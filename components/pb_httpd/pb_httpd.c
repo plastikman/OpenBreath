@@ -685,7 +685,9 @@ static esp_err_t settings_post(httpd_req_t *req)
     if (httpd_query_key_value(q, "leds_enabled", v, sizeof v) == ESP_OK) {
         uint32_t on;
         if (!parse_u32(v, &on)) { httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "bad leds_enabled"); return ESP_FAIL; }
-        pb_leds_set_enabled(on != 0);   // persists
+        if (pb_leds_set_enabled(on != 0) != ESP_OK)   // persists; may fail
+            return api_error(req, "500 Internal Server Error", "persist_failed",
+                             "could not save LED setting", NULL);
         applied = true;
     }
     if (!applied) {
@@ -741,11 +743,19 @@ static esp_err_t calibration_post(httpd_req_t *req)
     bool applied = false;
     double v;
     if (json_number(root, "chamber_offset_c", &v)) {
-        pb_ntc_set_offset_c(PB_NTC_CHAMBER, (float)v);   // clamps + persists
+        if (pb_ntc_set_offset_c(PB_NTC_CHAMBER, (float)v) != ESP_OK) {   // clamps + persists
+            cJSON_Delete(root);
+            return api_error(req, "500 Internal Server Error", "persist_failed",
+                             "could not save calibration", NULL);
+        }
         applied = true;
     }
     if (json_number(root, "ptc_offset_c", &v)) {
-        pb_ntc_set_offset_c(PB_NTC_PTC, (float)v);       // clamps + persists
+        if (pb_ntc_set_offset_c(PB_NTC_PTC, (float)v) != ESP_OK) {       // clamps + persists
+            cJSON_Delete(root);
+            return api_error(req, "500 Internal Server Error", "persist_failed",
+                             "could not save calibration", NULL);
+        }
         applied = true;
     }
     cJSON_Delete(root);
@@ -1024,7 +1034,7 @@ esp_err_t pb_httpd_start(void)
     httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
     cfg.lru_purge_enable = true;
     cfg.uri_match_fn = httpd_uri_match_wildcard;   // lets pb_portal add a "/*" captive catch-all
-    cfg.max_uri_handlers = 22;                     // 21 used + 1 spare
+    cfg.max_uri_handlers = 23;                     // 22 used (+ /favicon.ico) + 1 spare
     // The OTA handler hashes the image (mbedtls) with a 1 KB read buffer + the
     // app descriptor on-stack, which overflows the 4 KB default httpd task stack
     // (stack-protection panic). Give it headroom.

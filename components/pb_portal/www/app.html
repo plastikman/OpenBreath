@@ -4,7 +4,17 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="referrer" content="no-referrer">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#181818" media="(prefers-color-scheme: dark)">
 <title>DragonBreath</title>
+<!-- Favicon: the DragonBreath dragon mark, self-contained (URL-encoded inline SVG,
+     no external requests). The SVG icon is theme-adaptive (charcoal on a light tab,
+     white on a dark tab) via an embedded prefers-color-scheme rule. The browser's
+     automatic /favicon.ico fetch is answered by a real 32x32 PNG route in
+     pb_portal.c, so it never falls through to the SPA HTML catch-all. -->
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2032%2032'%3E%3Cstyle%3Epath%7Bfill:%2318181b%7D%40media(prefers-color-scheme:dark)%7Bpath%7Bfill:%23fff%7D%7D%3C/style%3E%3Cpath%20fill-rule='evenodd'%20d='M2%2015%20L8%2013%20L11%2011%20L13%208%20L15%2010%20L21%203%20L18%2011%20L21%2013%20L24%2015%20L28%2017%20L23%2018%20L27%2022%20L20%2020%20L18%2020%20L16%2019%20L3%2019%20Z%20M10%2012%20a1.4%201.4%200%20100%202.8%201.4%201.4%200%20000-2.8Z'/%3E%3C/svg%3E">
+<link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2032%2032'%3E%3Crect%20width='32'%20height='32'%20rx='7'%20fill='%2318181b'/%3E%3Cg%20transform='translate(3.4%205.2)%20scale(0.8)'%20fill='%23fff'%3E%3Cpath%20fill-rule='evenodd'%20d='M2%2015%20L8%2013%20L11%2011%20L13%208%20L15%2010%20L21%203%20L18%2011%20L21%2013%20L24%2015%20L28%2017%20L23%2018%20L27%2022%20L20%2020%20L18%2020%20L16%2019%20L3%2019%20Z%20M10%2012%20a1.4%201.4%200%20100%202.8%201.4%201.4%200%20000-2.8Z'/%3E%3C/g%3E%3C/svg%3E">
 <style>
 /* ---- Charcoal Fluidd/Mainsail token system (light + dark via light-dark()).
    Lifted from the approved design prototype; do not depend on the old blue. ---- */
@@ -55,6 +65,11 @@ body{
 .btn:not(:disabled):hover{ background: color-mix(in srgb, var(--foreground) 6%, var(--secondary)); }
 .btn:focus-visible{ outline: 2px solid var(--ring); outline-offset: 2px; }
 .btn:disabled{ cursor: not-allowed; opacity: .4; }
+/* Visible keyboard focus on every interactive control (a11y): rail tabs, range
+   sliders and selects. Buttons/inputs are covered by their own focus-visible rules. */
+.form-range:focus-visible,
+.form-select:focus-visible{ outline: 2px solid var(--ring); outline-offset: 2px; }
+.form-range:focus-visible::-webkit-slider-thumb{ outline: 2px solid var(--ring); outline-offset: 1px; }
 .btn-sm{ min-height: 26px; font-size: 12px; }
 .btn-block{ width: 100%; }
 .btn-primary{ border-color: transparent; color: var(--primary-foreground); background: var(--foreground); }
@@ -117,6 +132,7 @@ svg.icon{ width: 20px; height: 20px; fill: none; stroke: currentColor;
   background: transparent; color: var(--muted-foreground); cursor: pointer;
 }
 .tab:hover{ background: var(--muted); color: var(--foreground); }
+.tab:focus-visible{ outline: 2px solid var(--ring); outline-offset: -2px; border-radius: 5px; }
 .tab[aria-selected="true"]{
   color: var(--primary); border-left-color: var(--primary);
   background: color-mix(in srgb, var(--primary) 12%, transparent);
@@ -255,6 +271,18 @@ svg.icon{ width: 20px; height: 20px; fill: none; stroke: currentColor;
 .log-list .log-t{ flex: none; color: var(--muted-foreground); }
 .log-list .log-m{ min-width: 0; word-break: break-word; }
 
+/* ---- Appearance (theme) segmented control in Settings. Reuses the .btn token
+   kit; aria-pressed marks the active choice (see .btn[aria-pressed="true"]). ---- */
+.theme-seg{ display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.theme-seg .btn{ gap: 6px; }
+
+/* ---- Respect reduced-motion: drop the progress-bar/trend transitions and any
+   other animation for users who ask for it (a11y). ---- */
+@media (prefers-reduced-motion: reduce){
+  *{ transition-duration: 0s !important; animation-duration: 0s !important;
+     animation-iteration-count: 1 !important; scroll-behavior: auto !important; }
+}
+
 /* ---- Compact tile (~439x329) + narrow iframe: prioritize temp/PTC/state/graph/Stop. ---- */
 @container (max-width: 600px){
   .shell{ grid-template: 39px minmax(0,1fr) / 43px minmax(0,1fr); }
@@ -311,9 +339,11 @@ svg.icon{ width: 20px; height: 20px; fill: none; stroke: currentColor;
   <div class="shell">
     <header class="topbar">
       <div class="brand" id="brand" title="DragonBreath">
-        <svg viewBox="0 0 32 32" role="img" aria-label="DragonBreath logo" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round">
-          <path d="M6 5h8c8 0 12 4 12 11S22 27 14 27H6z"/>
-          <path d="M11 11h7M11 16h10M11 21h7"/>
+        <!-- DragonBreath mark: an angular dragon-head profile (swept-back horn,
+             open maw, eye). Monochrome currentColor so it inherits the theme and
+             reads clearly even at favicon size / when the wordmark is hidden. -->
+        <svg viewBox="0 0 32 32" role="img" aria-label="DragonBreath logo" fill="currentColor">
+          <path fill-rule="evenodd" d="M2 15 8 13 11 11 13 8 15 10 21 3 18 11 21 13 24 15 28 17 23 18 27 22 20 20 18 20 16 19 3 19Z M10 12a1.4 1.4 0 100 2.8 1.4 1.4 0 000-2.8Z"/>
         </svg>
         <span>DragonBreath</span>
       </div>
@@ -559,6 +589,18 @@ svg.icon{ width: 20px; height: 20px; fill: none; stroke: currentColor;
           <div class="mode-feedback" id="s-leds-msg" role="status" aria-live="polite"></div>
         </div>
 
+        <!-- Appearance: light / dark / auto. Client-only preference (localStorage),
+             no device round-trip. 'Auto' follows the device via light-dark(). -->
+        <div class="set-card">
+          <h3>Appearance</h3>
+          <div class="theme-seg" role="group" aria-label="Theme">
+            <button class="btn" type="button" data-theme-set="auto" aria-pressed="true">Auto</button>
+            <button class="btn" type="button" data-theme-set="light" aria-pressed="false">Light</button>
+            <button class="btn" type="button" data-theme-set="dark" aria-pressed="false">Dark</button>
+          </div>
+          <p class="set-note">Auto follows your device's light/dark setting. Your choice is remembered on this browser only.</p>
+        </div>
+
         <!-- Network / printer + control token. -->
         <div class="set-card">
           <h3>Network &amp; printer</h3>
@@ -615,6 +657,26 @@ svg.icon{ width: 20px; height: 20px; fill: none; stroke: currentColor;
   var $ = function(id){ return document.getElementById(id); };
   function u(id, v){ var e=$(id); if(e) e.textContent = v; }
   function deg(v){ return v==null ? '--' : Number(v).toFixed(1)+'°C'; }
+
+  /* ---- Appearance: light / dark / auto, persisted per-browser (localStorage).
+     'auto' removes data-theme so the CSS light-dark() tokens follow the device;
+     'light'/'dark' pin :root[data-theme], which also pins color-scheme so form
+     controls + scrollbars match. Self-contained; no device round-trip. ---- */
+  function applyTheme(t){
+    var r=document.documentElement;
+    if(t==='light'||t==='dark') r.setAttribute('data-theme', t); else { t='auto'; r.removeAttribute('data-theme'); }
+    document.querySelectorAll('[data-theme-set]').forEach(function(b){
+      b.setAttribute('aria-pressed', String(b.dataset.themeSet===t));
+    });
+  }
+  applyTheme(localStorage.getItem('db_theme') || 'auto');
+  document.querySelectorAll('[data-theme-set]').forEach(function(b){
+    b.addEventListener('click', function(){
+      var t=b.dataset.themeSet;
+      if(t==='auto') localStorage.removeItem('db_theme'); else localStorage.setItem('db_theme', t);
+      applyTheme(t);
+    });
+  });
 
   /* ---- Auth: reuse the X-DragonBreath-Auth token flow. Self-contained page, so
      nothing is injected server-side: default to the "web" CSRF sentinel (accepted
@@ -673,7 +735,14 @@ svg.icon{ width: 20px; height: 20px; fill: none; stroke: currentColor;
     return 'Heater disabled. Monitoring remains active.';
   }
 
-  function setConn(online){ app.setAttribute('data-online', online?'1':'0'); u('db-conn', online?'Online':'Offline'); }
+  function setConn(online){
+    app.setAttribute('data-online', online?'1':'0');
+    u('db-conn', online?'Online':'Offline');
+    /* Expose connection state to assistive tech + as a tooltip so it is never
+       conveyed by the dot colour alone (the text label is hidden when compact). */
+    var c=document.querySelector('.connection');
+    if(c){ c.setAttribute('aria-label', online?'Connection: online':'Connection: offline'); c.title = online?'Online':'Offline'; }
+  }
 
   function apply(s){
     if(!s || s.api_version!==2) return;

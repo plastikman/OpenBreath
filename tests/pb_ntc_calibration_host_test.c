@@ -6,6 +6,7 @@
 // what bounds how far the fixed over-temp cutoffs can shift.
 #include "pb_ntc.h"
 
+#include <limits.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -40,6 +41,28 @@ int main(void)
     CHECK(pb_ntc_clamp_offset_c(NAN)       == 0.0f);
     CHECK(pb_ntc_clamp_offset_c(INFINITY)  == 5.0f);
     CHECK(pb_ntc_clamp_offset_c(-INFINITY) == -5.0f);
+
+    // --- NVS-LOAD path -------------------------------------------------------
+    // Offsets are stored as centi-°C; pb_ntc_load_calibration() re-clamps every
+    // loaded value through pb_ntc_clamp_offset_centi() (the SAME bound the setter
+    // uses) so a corrupt / hand-edited / out-of-range STORED value clamps to
+    // ±5 °C on load and can never be applied raw. Exercise that shared helper.
+    CHECK(PB_NTC_OFFSET_CENTI_MAX == 500);
+
+    // In-range stored centi values pass through unchanged (incl. endpoints).
+    CHECK(pb_ntc_clamp_offset_centi(0)    == 0);
+    CHECK(pb_ntc_clamp_offset_centi(250)  == 250);
+    CHECK(pb_ntc_clamp_offset_centi(-300) == -300);
+    CHECK(pb_ntc_clamp_offset_centi(500)  == 500);
+    CHECK(pb_ntc_clamp_offset_centi(-500) == -500);
+
+    // Out-of-range STORED values clamp to ±5 °C (±500 centi) on load — never raw.
+    CHECK(pb_ntc_clamp_offset_centi(501)     == 500);
+    CHECK(pb_ntc_clamp_offset_centi(10000)   == 500);
+    CHECK(pb_ntc_clamp_offset_centi(-501)    == -500);
+    CHECK(pb_ntc_clamp_offset_centi(-10000)  == -500);
+    CHECK(pb_ntc_clamp_offset_centi(INT_MAX) == 500);
+    CHECK(pb_ntc_clamp_offset_centi(INT_MIN) == -500);
 
     printf("pb_ntc calibration clamp checks: PASS\n");
     return 0;

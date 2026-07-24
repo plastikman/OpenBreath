@@ -28,7 +28,8 @@ static const char *TAG = "pb_ntc";
 #define PB_NTC_NVS_NS       "app_nvs"
 #define PB_NTC_KEY_OFF_CH   "ntc_off_ch"    // i32 centi-°C, chamber
 #define PB_NTC_KEY_OFF_PTC  "ntc_off_ptc"   // i32 centi-°C, PTC
-#define PB_NTC_OFFSET_CENTI_MAX  ((int)(PB_NTC_OFFSET_MAX_C * 100.0f))
+// PB_NTC_OFFSET_CENTI_MAX + pb_ntc_clamp_offset_centi() live in pb_ntc.h so the
+// loader, the setter and the host test all share one bound / one clamp.
 
 static _Atomic int s_offset_centi[2];       // [PB_NTC_CHAMBER], [PB_NTC_PTC]
 
@@ -48,12 +49,10 @@ void pb_ntc_load_calibration(void)
         if (nvs_get_i32(h, PB_NTC_KEY_OFF_PTC, &v) == ESP_OK) ptc_centi = v;
         nvs_close(h);
     }
-    // Clamp on load: a corrupt / out-of-range stored value must clamp, never be
-    // applied raw. Bound is identical to the setter's ±5 °C.
-    if (ch_centi  < -PB_NTC_OFFSET_CENTI_MAX) ch_centi  = -PB_NTC_OFFSET_CENTI_MAX;
-    if (ch_centi  >  PB_NTC_OFFSET_CENTI_MAX) ch_centi  =  PB_NTC_OFFSET_CENTI_MAX;
-    if (ptc_centi < -PB_NTC_OFFSET_CENTI_MAX) ptc_centi = -PB_NTC_OFFSET_CENTI_MAX;
-    if (ptc_centi >  PB_NTC_OFFSET_CENTI_MAX) ptc_centi =  PB_NTC_OFFSET_CENTI_MAX;
+    // Clamp on load through the SAME shared clamp as the setter: a corrupt /
+    // out-of-range stored value must clamp to ±5 °C, never be applied raw.
+    ch_centi  = pb_ntc_clamp_offset_centi((int)ch_centi);
+    ptc_centi = pb_ntc_clamp_offset_centi((int)ptc_centi);
     atomic_store(&s_offset_centi[PB_NTC_CHAMBER], (int)ch_centi);
     atomic_store(&s_offset_centi[PB_NTC_PTC],     (int)ptc_centi);
     ESP_LOGI(TAG, "calibration loaded: chamber=%+.2fC ptc=%+.2fC",
@@ -64,17 +63,28 @@ esp_err_t pb_ntc_set_offset_c(pb_ntc_channel_t ch, float offset_c)
 {
     if (ch < PB_NTC_CHAMBER || ch > PB_NTC_PTC) return ESP_ERR_INVALID_ARG;
     float clamped = pb_ntc_clamp_offset_c(offset_c);          // ±5 °C hard bound
-    int centi = (int)lroundf(clamped * 100.0f);
-    if (centi < -PB_NTC_OFFSET_CENTI_MAX) centi = -PB_NTC_OFFSET_CENTI_MAX;
-    if (centi >  PB_NTC_OFFSET_CENTI_MAX) centi =  PB_NTC_OFFSET_CENTI_MAX;
-    atomic_store(&s_offset_centi[ch], centi);
+    int centi = pb_ntc_clamp_offset_centi((int)lroundf(clamped * 100.0f));
+
+    // Persist FIRST; only update the live RAM offset once the write commits, so a
+    // failed save leaves RAM and NVS consistent (both unchanged) and the caller
+    // learns the value was NOT saved instead of getting a false success.
     nvs_handle_t h;
-    if (nvs_open(PB_NTC_NVS_NS, NVS_READWRITE, &h) == ESP_OK) {
-        nvs_set_i32(h, ch == PB_NTC_CHAMBER ? PB_NTC_KEY_OFF_CH
-                                            : PB_NTC_KEY_OFF_PTC, centi);
-        nvs_commit(h);
-        nvs_close(h);
+    esp_err_t err = nvs_open(PB_NTC_NVS_NS, NVS_READWRITE, &h);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "calibration offset ch%d NOT saved: nvs_open %s",
+                 (int)ch, esp_err_to_name(err));
+        return err;
     }
+    err = nvs_set_i32(h, ch == PB_NTC_CHAMBER ? PB_NTC_KEY_OFF_CH
+                                              : PB_NTC_KEY_OFF_PTC, centi);
+    if (err == ESP_OK) err = nvs_commit(h);
+    nvs_close(h);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "calibration offset ch%d NOT saved: %s",
+                 (int)ch, esp_err_to_name(err));
+        return err;
+    }
+    atomic_store(&s_offset_centi[ch], centi);
     ESP_LOGI(TAG, "calibration offset ch%d set to %+.2f C", (int)ch, (double)clamped);
     return ESP_OK;
 }

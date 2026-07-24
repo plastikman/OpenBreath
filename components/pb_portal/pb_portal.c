@@ -24,6 +24,11 @@ static const char *TAG = "pb_portal";
 // Served verbatim as a single Content-Encoding: gzip response.
 extern const uint8_t app_html_gz_start[] asm("_binary_app_html_gz_start");
 extern const uint8_t app_html_gz_end[]   asm("_binary_app_html_gz_end");
+// 32x32 PNG of the DragonBreath dragon mark, embedded from www/favicon.png (see
+// CMakeLists.txt). Served at /favicon.ico so the browser's automatic favicon fetch
+// gets a real icon instead of the SPA HTML from the "/*" catch-all.
+extern const uint8_t favicon_png_start[] asm("_binary_favicon_png_start");
+extern const uint8_t favicon_png_end[]   asm("_binary_favicon_png_end");
 // Non-empty guard: httpd_resp_send_chunk() with a 0-length string terminates
 // the chunked response early, so we must never send an empty chunk.
 #define SEND(req, s) do { const char *_s = (s); if (_s && _s[0]) httpd_resp_send_chunk((req), _s, HTTPD_RESP_USE_STRLEN); } while (0)
@@ -325,6 +330,19 @@ static esp_err_t config_page(httpd_req_t *req)
     return httpd_resp_send_chunk(req, NULL, 0);
 }
 
+// Browser-tab favicon (GET /favicon.ico). Serves the embedded 32x32 PNG of the
+// dragon mark as image/png. Registered before the "/*" catch-all so the browser's
+// automatic /favicon.ico request never falls through to the SPA HTML. The inline
+// SVG <link> in app.html's <head> provides the crisp, theme-adaptive icon for
+// browsers that honor it; this PNG is the universal fallback.
+static esp_err_t favicon_ico(httpd_req_t *req)
+{
+    const size_t len = (size_t)(favicon_png_end - favicon_png_start);
+    httpd_resp_set_type(req, "image/png");
+    httpd_resp_set_hdr(req, "Cache-Control", "max-age=86400");
+    return httpd_resp_send(req, (const char *)favicon_png_start, len);
+}
+
 // Catch-all root: in AP mode serve the config page so captive-portal probes land
 // on setup; in STA mode serve the live dashboard SPA.
 static esp_err_t root_page(httpd_req_t *req)
@@ -427,12 +445,14 @@ esp_err_t pb_portal_start(void)
     httpd_uri_t scan   = { .uri = "/scan.json", .method = HTTP_GET,  .handler = scan_json };
     httpd_uri_t setup  = { .uri = "/setup",     .method = HTTP_GET,  .handler = config_page };
     httpd_uri_t fw     = { .uri = "/fw",        .method = HTTP_GET,  .handler = fw_page };
+    httpd_uri_t favic  = { .uri = "/favicon.ico", .method = HTTP_GET, .handler = favicon_ico };
     httpd_uri_t root   = { .uri = "/*",          .method = HTTP_GET,  .handler = root_page };
     httpd_register_uri_handler(s, &save);
     httpd_register_uri_handler(s, &rescan);
     httpd_register_uri_handler(s, &scan);
     httpd_register_uri_handler(s, &setup);
     httpd_register_uri_handler(s, &fw);
+    httpd_register_uri_handler(s, &favic);  // before the catch-all so /favicon.ico != SPA
     httpd_register_uri_handler(s, &root);   // catch-all LAST (captive-portal probes)
 
     if (pv_wifi_state() == PV_WIFI_STATE_AP_PORTAL) {

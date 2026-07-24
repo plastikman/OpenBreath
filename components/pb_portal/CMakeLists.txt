@@ -23,3 +23,9 @@ add_custom_command(
 # target_add_binary_data understands generated inputs and emits the
 # _binary_app_html_gz_start/_end symbols used by pb_portal.c.
 target_add_binary_data(${COMPONENT_LIB} "${APP_HTML_GZ}" BINARY)
+
+# Favicon: a real 32x32 PNG of the DragonBreath dragon mark (pre-rendered, checked
+# into www/ so the build needs no headless browser). Embedded into flash rodata and
+# served verbatim as image/png at /favicon.ico, so the browser's automatic
+# /favicon.ico fetch gets a proper icon instead of falling through to the SPA HTML.
+target_add_binary_data(${COMPONENT_LIB} "${COMPONENT_DIR}/www/favicon.png" BINARY)

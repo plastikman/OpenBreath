@@ -62,6 +62,22 @@ static inline float pb_ntc_clamp_offset_c(float v)
     return v;
 }
 
+// Offsets are persisted in NVS as centi-°C; this is the same ±5 °C bound in that
+// unit. Kept here (not in the .c) so the loader, the setter and the host test all
+// share one definition.
+#define PB_NTC_OFFSET_CENTI_MAX  ((int)(PB_NTC_OFFSET_MAX_C * 100.0f))
+
+// Clamp a STORED centi-°C offset to the ±5 °C bound. This is the SHARED clamp the
+// NVS loader AND the setter both run, so a corrupt / hand-edited / out-of-range
+// stored value can never be applied raw — it clamps identically on load and on
+// set. Pure + inline so the safety invariant is unit-tested directly.
+static inline int pb_ntc_clamp_offset_centi(int centi)
+{
+    if (centi < -PB_NTC_OFFSET_CENTI_MAX) return -PB_NTC_OFFSET_CENTI_MAX;
+    if (centi >  PB_NTC_OFFSET_CENTI_MAX) return  PB_NTC_OFFSET_CENTI_MAX;
+    return centi;
+}
+
 // Load persisted per-channel offsets from NVS (namespace app_nvs). MUST be called
 // AFTER nvs_init(). Every loaded value is passed through the ±5 °C clamp, so a
 // corrupt / hand-edited / out-of-range stored value clamps — it is never applied

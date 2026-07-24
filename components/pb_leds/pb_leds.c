@@ -183,15 +183,25 @@ void pb_leds_load_config(void)
 
 esp_err_t pb_leds_set_enabled(bool enabled)
 {
-    atomic_store(&s_enabled, enabled);   // driver task honors it on the next tick
+    // Persist FIRST; only flip the live flag once the write commits so RAM and
+    // NVS stay consistent and a failed save is reported rather than silently lost
+    // (the caller must not tell the user "saved" when nothing was persisted).
     nvs_handle_t h;
-    if (nvs_open(NVS_NS, NVS_READWRITE, &h) == ESP_OK) {
-        nvs_set_u32(h, KEY_LEDS_ENABLED, enabled ? 1u : 0u);
-        nvs_commit(h);
-        nvs_close(h);
+    esp_err_t err = nvs_open(NVS_NS, NVS_READWRITE, &h);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "LED enable NOT saved: nvs_open %s", esp_err_to_name(err));
+        return err;
     }
+    err = nvs_set_u32(h, KEY_LEDS_ENABLED, enabled ? 1u : 0u);
+    if (err == ESP_OK) err = nvs_commit(h);
+    nvs_close(h);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "LED enable NOT saved: %s", esp_err_to_name(err));
+        return err;
+    }
+    atomic_store(&s_enabled, enabled);   // driver task honors it on the next tick
     ESP_LOGI(TAG, "status LEDs %s", enabled ? "enabled" : "disabled");
-    return ESP_OK;
+    return err;
 }
 
 bool pb_leds_get_enabled(void) { return atomic_load(&s_enabled); }
