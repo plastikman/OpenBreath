@@ -24,6 +24,10 @@ Commands are **revision-aware** (a stale writer can't clobber newer state) and
 **idempotent** (request-ID replay cache); `off`/`drying_stop` are always accepted
 and never cached.
 
+AUTO and DRYING are implemented in the policy/API. Their dashboard control path
+is still tracked as partial until its user-facing feedback and end-to-end
+operation are validated; see [`OEM_PARITY.md`](OEM_PARITY.md).
+
 ## Safety
 
 Defense-in-depth — see [`SAFETY.md`](SAFETY.md) for the full model.

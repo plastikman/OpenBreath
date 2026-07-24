@@ -121,8 +121,10 @@ added alongside `POST /settings` (bounds + current values in one read); `max_uri
 >   device-issued lease + stale-lease rejection · **B7** API v2 (`/api/v2/info|state|health|events(SSE)|command|heartbeat`;
 >   alpha `/status`,`/target`,`/heartbeat`,`/reset` removed) · **B8** local POWER_ON 12 h cap ·
 >   **B9** dashboard + helper consume the snapshot/SSE stream.
-> - **Validated on hardware (2026-07-23):** `M141 S45` → POWER_ON + Klipper lease + heat;
->   DRYING timed heat; AUTO arms (bed-gated, engages when Moonraker bed ≥ threshold).
+> - **Exercised on hardware (2026-07-23):** `M141 S45` → POWER_ON + Klipper lease + heat;
+>   the policy/API can enter DRYING and arm AUTO. The shipped dashboard controls are
+>   **not yet accepted as end-to-end validated** after a user report that neither action
+>   appeared to take effect; their feedback/control wiring remains follow-up work.
 > - **⚠ Partial / carried forward — B2 NOT done:** the thermal-purge latch (engage ≥40 °C,
 >   hysteresis release) and the **NVS-persisted** fault latch are unimplemented. `thermal_purge`
 >   in the snapshot is a *heuristic* derived from the v0.2.0 post-print fan cooldown (#6), not

@@ -9,8 +9,8 @@ Current as of **v0.3.0**.
 | Stock/OEM behavior | DragonBreath status | Notes |
 |---|---|---|
 | Manual chamber target | **Implemented** | Local Web UI and Klipper `M141`/`M191`; device-side regulation and limits remain authoritative. |
-| Follow-printer-bed automatic mode | **Implemented** | Uses live Moonraker bed temperature with 3 °C disengage hysteresis; fails off if Moonraker disconnects. |
-| Timed filament drying | **Implemented** | User-selected target and bounded 1–12 hour duration with automatic shutoff. Named material presets remain planned. |
+| Follow-printer-bed automatic mode | **Partial** | Policy/API support is present: live Moonraker bed temperature, 3 °C disengage hysteresis, and fail-off on disconnect. The shipped dashboard control is not yet accepted as end-to-end validated. |
+| Timed filament drying | **Partial** | Policy/API support is present: a target plus bounded 1–12 hour duration and automatic shutoff. The shipped dashboard control is not yet accepted as end-to-end validated; named material presets remain planned. |
 | Chamber and PTC temperature display | **Implemented** | Both sensors and their health are exposed in the dashboard and API v2 state. |
 | Sensor-fault and over-temperature shutdown | **Implemented** | Heater fails closed; fixed 85 °C chamber and 105 °C PTC cutoffs are not user-configurable. |
 | Fan follows heater | **Implemented** | TRIAC is held on/off and never phase-angle PWM'd. |
