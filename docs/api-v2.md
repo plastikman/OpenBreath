@@ -56,6 +56,13 @@ The complete snapshot, not locally remembered intent, is the source of truth:
     "auto_bed_threshold_c": 0.0
   },
   "drying": {"active": false, "remaining_seconds": 0},
+  "params": {
+    "manual_target_c": 50.0,
+    "auto_target_c": 60.0,
+    "auto_bed_threshold_c": 100.0,
+    "dry_target_c": 60.0,
+    "dry_hours": 12
+  },
   "control": {
     "lease": {
       "active": true,
@@ -77,6 +84,14 @@ authenticated response that creates a POWER_ON lease returns it.
 `state_revision` changes only for control, mode, lease, fault, and safety
 transitions; ordinary temperature samples and successful heartbeats do not
 increment it.
+
+`params` reports the *remembered* mode parameters — the values most recently
+accepted for each mode, used to pre-fill the UI and to re-arm a mode when the
+caller supplies no values of its own (the front-panel buttons). These are the
+only policy values that survive a reboot; the active mode, target, deadline, and
+lease deliberately do not. Updating them is a side effect of an accepted
+`power_on` / `auto` / `drying_start` command, and the value recorded is always
+the clamped one the device actually applied — there is no separate write path.
 
 ## Commands
 

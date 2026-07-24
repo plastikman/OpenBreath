@@ -11,6 +11,8 @@
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
+#include "freertos/task.h"
+#include "nvs.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -22,6 +24,23 @@ static const char *TAG = "pb_policy";
 #define PB_AUTO_BED_HYSTERESIS_C     3.0f
 #define PB_DRYING_MAX_HOURS         12U
 #define PB_MIN_MODE_TARGET_C        30.0f
+
+// --- Remembered mode parameters (the only reboot-surviving policy state) -----
+#define PB_NVS_NAMESPACE            "app_nvs"
+#define PB_NVS_KEY_MANUAL           "md_last"
+#define PB_NVS_KEY_AUTO_TGT         "md_auto_tgt"
+#define PB_NVS_KEY_AUTO_BED         "md_auto_bed"
+#define PB_NVS_KEY_DRY_TGT          "md_dry_tgt"
+#define PB_NVS_KEY_DRY_HRS          "md_dry_hrs"
+
+#define PB_AUTO_BED_MIN_C           40.0f
+#define PB_AUTO_BED_MAX_C          120.0f
+
+#define PB_DEFAULT_MANUAL_TARGET_C  50.0f
+#define PB_DEFAULT_AUTO_TARGET_C    60.0f
+#define PB_DEFAULT_AUTO_BED_C      100.0f
+#define PB_DEFAULT_DRY_TARGET_C     60.0f
+#define PB_DEFAULT_DRY_HOURS        12U
 
 typedef struct {
     pb_mode_t mode;
@@ -46,10 +65,19 @@ typedef struct {
 
     bool heated_this_session;
     bool last_faulted;
+
+    pb_policy_params_t params;   // remembered mode parameters
+    bool params_dirty;           // params differ from what is on flash
 } policy_state_t;
 
 static SemaphoreHandle_t s_lock;
 static policy_state_t s;
+
+// Owned exclusively by the persistence worker: the last values successfully
+// committed, so only genuinely changed keys are rewritten (flash wear).
+static pb_policy_params_t s_written;
+static bool s_written_valid;
+static TaskHandle_t s_persist_task;
 
 static bool source_is_remote(pb_source_t source)
 {
@@ -132,6 +160,189 @@ static void set_off_locked(pb_source_t source)
     revision_advance_locked(source);
 }
 
+// --- Remembered mode parameters ---------------------------------------------
+// Parameters are the ONLY policy state that survives a reboot. Mode, target,
+// deadlines, and leases deliberately do not: the device always boots OFF.
+
+static uint32_t c_to_centi(float c) { return (uint32_t)lroundf(c * 100.0f); }
+static float centi_to_c(uint32_t centi) { return (float)centi / 100.0f; }
+
+// A corrupt or absent value falls back to the default rather than to a bound,
+// so a garbage read cannot silently become "heat to the floor temperature".
+static float clamp_or_default(float v, float lo, float hi, float dflt)
+{
+    if (!isfinite(v)) return dflt;
+    return v < lo ? lo : (v > hi ? hi : v);
+}
+
+static void params_clamp(pb_policy_params_t *p)
+{
+    p->manual_target_c = clamp_or_default(
+        p->manual_target_c, PB_MIN_MODE_TARGET_C,
+        PB_HEATER_ABS_MAX_TARGET_C, PB_DEFAULT_MANUAL_TARGET_C);
+    p->auto_target_c = clamp_or_default(
+        p->auto_target_c, PB_MIN_MODE_TARGET_C,
+        PB_HEATER_ABS_MAX_TARGET_C, PB_DEFAULT_AUTO_TARGET_C);
+    p->auto_bed_threshold_c = clamp_or_default(
+        p->auto_bed_threshold_c, PB_AUTO_BED_MIN_C,
+        PB_AUTO_BED_MAX_C, PB_DEFAULT_AUTO_BED_C);
+    p->dry_target_c = clamp_or_default(
+        p->dry_target_c, PB_MIN_MODE_TARGET_C,
+        PB_HEATER_ABS_MAX_TARGET_C, PB_DEFAULT_DRY_TARGET_C);
+    if (p->dry_hours == 0 || p->dry_hours > PB_DRYING_MAX_HOURS)
+        p->dry_hours = PB_DEFAULT_DRY_HOURS;
+}
+
+static void params_defaults_locked(void)
+{
+    s.params.manual_target_c      = PB_DEFAULT_MANUAL_TARGET_C;
+    s.params.auto_target_c        = PB_DEFAULT_AUTO_TARGET_C;
+    s.params.auto_bed_threshold_c = PB_DEFAULT_AUTO_BED_C;
+    s.params.dry_target_c         = PB_DEFAULT_DRY_TARGET_C;
+    s.params.dry_hours            = PB_DEFAULT_DRY_HOURS;
+}
+
+// Wake the persistence worker. Call AFTER releasing s_lock: NVS writes must
+// never happen under the control mutex.
+static void params_notify(void)
+{
+    if (s_persist_task) xTaskNotifyGive(s_persist_task);
+}
+
+// Only the persistence worker (or the host test) reaches this, so writes are
+// serialized by construction: there is exactly one writer, and it always writes
+// the latest canonical snapshot. Concurrent HTTP/button commands therefore
+// cannot land on flash out of order.
+static esp_err_t persist_params(const pb_policy_params_t *p)
+{
+    const struct { const char *key; uint32_t val, prev; } kv[] = {
+        { PB_NVS_KEY_MANUAL,   c_to_centi(p->manual_target_c),
+                               c_to_centi(s_written.manual_target_c) },
+        { PB_NVS_KEY_AUTO_TGT, c_to_centi(p->auto_target_c),
+                               c_to_centi(s_written.auto_target_c) },
+        { PB_NVS_KEY_AUTO_BED, c_to_centi(p->auto_bed_threshold_c),
+                               c_to_centi(s_written.auto_bed_threshold_c) },
+        { PB_NVS_KEY_DRY_TGT,  c_to_centi(p->dry_target_c),
+                               c_to_centi(s_written.dry_target_c) },
+        { PB_NVS_KEY_DRY_HRS,  p->dry_hours, s_written.dry_hours },
+    };
+    const size_t n = sizeof kv / sizeof kv[0];
+
+    bool any = !s_written_valid;
+    for (size_t i = 0; !any && i < n; ++i)
+        if (kv[i].val != kv[i].prev) any = true;
+    if (!any) return ESP_OK;   // nothing actually changed -- spare the flash
+
+    nvs_handle_t h;
+    esp_err_t err = nvs_open(PB_NVS_NAMESPACE, NVS_READWRITE, &h);
+    if (err != ESP_OK) return err;
+    for (size_t i = 0; i < n; ++i) {
+        if (s_written_valid && kv[i].val == kv[i].prev) continue;
+        esp_err_t e = nvs_set_u32(h, kv[i].key, kv[i].val);
+        if (e != ESP_OK && err == ESP_OK) err = e;
+    }
+    if (err == ESP_OK) err = nvs_commit(h);
+    nvs_close(h);
+    if (err == ESP_OK) {
+        s_written = *p;
+        s_written_valid = true;
+    }
+    return err;
+}
+
+bool pb_policy_persist_pending(void)
+{
+    if (!s_lock) return false;
+
+    pb_policy_params_t p;
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    bool dirty = s.params_dirty;
+    p = s.params;                 // canonical post-clamp values, never raw input
+    if (dirty) s.params_dirty = false;
+    xSemaphoreGive(s_lock);
+    if (!dirty) return false;
+
+    esp_err_t err = persist_params(&p);
+    if (err != ESP_OK) {
+        // Stay dirty so the next accepted command retries. A command that landed
+        // while we were writing may re-dirty this too; an extra no-op pass is
+        // harmless.
+        ESP_LOGE(TAG, "params persist failed (%d); will retry on next change",
+                 (int)err);
+        xSemaphoreTake(s_lock, portMAX_DELAY);
+        s.params_dirty = true;
+        xSemaphoreGive(s_lock);
+    }
+    return true;
+}
+
+static void persist_task(void *arg)
+{
+    (void)arg;
+    for (;;) {
+        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+        pb_policy_persist_pending();
+    }
+}
+
+void pb_policy_load_params(void)
+{
+    if (!s_lock) return;
+
+    pb_policy_params_t p;
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    p = s.params;                 // defaults installed by pb_policy_init()
+    xSemaphoreGive(s_lock);
+
+    nvs_handle_t h;
+    if (nvs_open(PB_NVS_NAMESPACE, NVS_READONLY, &h) == ESP_OK) {
+        uint32_t v;
+        if (nvs_get_u32(h, PB_NVS_KEY_MANUAL, &v) == ESP_OK)
+            p.manual_target_c = centi_to_c(v);
+        if (nvs_get_u32(h, PB_NVS_KEY_AUTO_TGT, &v) == ESP_OK)
+            p.auto_target_c = centi_to_c(v);
+        if (nvs_get_u32(h, PB_NVS_KEY_AUTO_BED, &v) == ESP_OK)
+            p.auto_bed_threshold_c = centi_to_c(v);
+        if (nvs_get_u32(h, PB_NVS_KEY_DRY_TGT, &v) == ESP_OK)
+            p.dry_target_c = centi_to_c(v);
+        if (nvs_get_u32(h, PB_NVS_KEY_DRY_HRS, &v) == ESP_OK)
+            p.dry_hours = v > UINT8_MAX ? UINT8_MAX : (uint8_t)v;
+        nvs_close(h);
+    }
+    params_clamp(&p);
+
+    // Parameters only. Mode, target, deadlines, and leases are untouched, so
+    // this cannot arm heat -- the device stays OFF exactly as init left it.
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    s.params = p;
+    s.params_dirty = false;
+    xSemaphoreGive(s_lock);
+
+    s_written = p;
+    s_written_valid = true;
+
+    if (!s_persist_task &&
+        xTaskCreate(persist_task, "pb_pol_persist", 2560, NULL, 2,
+                    &s_persist_task) != pdPASS) {
+        s_persist_task = NULL;
+        ESP_LOGE(TAG, "persistence worker did not start; params stay RAM-only");
+    }
+    ESP_LOGI(TAG,
+        "params loaded: manual=%.1fC auto=%.1fC/bed%.1fC dry=%.1fC/%uh",
+        p.manual_target_c, p.auto_target_c, p.auto_bed_threshold_c,
+        p.dry_target_c, (unsigned)p.dry_hours);
+}
+
+void pb_policy_get_params(pb_policy_params_t *out)
+{
+    if (!out) return;
+    memset(out, 0, sizeof *out);
+    if (!s_lock) return;
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    *out = s.params;
+    xSemaphoreGive(s_lock);
+}
+
 esp_err_t pb_policy_init(void)
 {
     if (!s_lock) s_lock = xSemaphoreCreateMutex();
@@ -142,9 +353,11 @@ esp_err_t pb_policy_init(void)
     s.mode = PB_MODE_OFF;
     s.source = PB_SOURCE_BOOT;
     s.revision = 1;
-    s.auto_bed_threshold_c = 100.0f;
+    s.auto_bed_threshold_c = PB_DEFAULT_AUTO_BED_C;
     s.last_faulted = pb_heater_is_faulted();
+    params_defaults_locked();
     xSemaphoreGive(s_lock);
+    s_written_valid = false;   // nothing known about flash until load_params()
 
     // The heater was forced off before policy initialization.  Do not restore
     // mode, target, deadlines, or leases from storage.
@@ -194,7 +407,10 @@ pb_policy_result_t pb_policy_set_power_on(
             now + (int64_t)PB_POLICY_LOCAL_POWER_MAX_MS * 1000;
     }
     revision_advance_locked(source);
+    s.params.manual_target_c = s.requested_target_c;   // post-clamp
+    s.params_dirty = true;
     xSemaphoreGive(s_lock);
+    params_notify();
     return PB_POLICY_OK;
 }
 
@@ -225,7 +441,11 @@ pb_policy_result_t pb_policy_set_auto(
     s.local_power_deadline_us = 0;
     (void)pb_heater_set_target_c(0.0f);
     revision_advance_locked(source);
+    s.params.auto_target_c = s.requested_target_c;     // post-clamp
+    s.params.auto_bed_threshold_c = bed_threshold_c;
+    s.params_dirty = true;
     xSemaphoreGive(s_lock);
+    params_notify();
     return PB_POLICY_OK;
 }
 
@@ -259,7 +479,11 @@ pb_policy_result_t pb_policy_start_drying(
     s.drying_deadline_us = esp_timer_get_time()
         + (int64_t)hours * 60 * 60 * 1000000;
     revision_advance_locked(source);
+    s.params.dry_target_c = s.requested_target_c;      // post-clamp
+    s.params.dry_hours = hours;
+    s.params_dirty = true;
     xSemaphoreGive(s_lock);
+    params_notify();
     return PB_POLICY_OK;
 }
 

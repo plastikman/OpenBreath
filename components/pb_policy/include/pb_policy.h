@@ -50,6 +50,19 @@ typedef struct {
     char id[PB_POLICY_LEASE_ID_LEN + 1];
 } pb_policy_lease_t;
 
+// Remembered mode parameters: the values a mode is re-armed with when the
+// caller does not supply its own (front-panel buttons) and the values the UI
+// pre-fills from.  These are the ONLY policy state that survives a reboot --
+// never a mode, target, deadline, heating flag, or lease.  See
+// pb_policy_load_params().
+typedef struct {
+    float manual_target_c;        // last accepted POWER_ON target
+    float auto_target_c;          // last accepted AUTO target
+    float auto_bed_threshold_c;   // last accepted AUTO bed threshold
+    float dry_target_c;           // last accepted drying target
+    uint8_t dry_hours;            // last accepted drying duration
+} pb_policy_params_t;
+
 typedef struct {
     uint32_t state_revision;
     pb_mode_t mode;
@@ -88,6 +101,20 @@ typedef struct {
 } pb_policy_snapshot_t;
 
 esp_err_t pb_policy_init(void);
+
+// Load the remembered mode parameters from NVS (namespace app_nvs) and start the
+// persistence worker.  MUST be called AFTER nvs_init() -- pb_policy_init() only
+// installs conservative defaults, since NVS is not up that early.  Values are
+// clamped on read, and loading NEVER changes the mode or arms a target: the
+// device still boots OFF.
+void pb_policy_load_params(void);
+
+void pb_policy_get_params(pb_policy_params_t *out);
+
+// Write any pending parameter change to NVS.  Returns true if a commit was
+// attempted.  The persistence worker calls this in a loop; it is exposed so the
+// host test can drive persistence synchronously without a scheduler.
+bool pb_policy_persist_pending(void);
 
 // Remote WEB/KLIPPER POWER_ON commands receive a device-issued lease.  A lease
 // is RAM-only, changes on every accepted heat command, and is invalidated by

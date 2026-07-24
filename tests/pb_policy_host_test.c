@@ -1,6 +1,7 @@
 #include "pb_policy.h"
 #include "pb_heater.h"
 #include "pb_leds.h"
+#include "nvs.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -93,6 +94,69 @@ void pb_leds_set(pb_led_id_t id, pb_led_pattern_t pattern)
     if (id >= 0 && id < PB_LED_COUNT) led_pattern[id] = pattern;
 }
 
+// --- In-memory NVS ----------------------------------------------------------
+// Enough of the API for pb_policy's parameter persistence, plus a failure switch
+// so the retry path is testable.
+#define NVS_MAX_KEYS 16
+static struct { char key[20]; uint32_t val; bool set; } nvs_store[NVS_MAX_KEYS];
+static bool nvs_write_fails;
+static unsigned nvs_commits;
+static unsigned nvs_writes;
+
+static int nvs_slot(const char *key, bool create)
+{
+    for (int i = 0; i < NVS_MAX_KEYS; ++i)
+        if (nvs_store[i].set && strcmp(nvs_store[i].key, key) == 0) return i;
+    if (!create) return -1;
+    for (int i = 0; i < NVS_MAX_KEYS; ++i) {
+        if (!nvs_store[i].set) {
+            snprintf(nvs_store[i].key, sizeof nvs_store[i].key, "%s", key);
+            nvs_store[i].set = true;
+            return i;
+        }
+    }
+    return -1;
+}
+
+esp_err_t nvs_open(const char *ns, nvs_open_mode_t mode, nvs_handle_t *out)
+{
+    (void)ns; (void)mode;
+    if (out) *out = 1;
+    return ESP_OK;
+}
+
+esp_err_t nvs_get_u32(nvs_handle_t h, const char *key, uint32_t *out)
+{
+    (void)h;
+    int i = nvs_slot(key, false);
+    if (i < 0) return ESP_ERR_NVS_NOT_FOUND;
+    if (out) *out = nvs_store[i].val;
+    return ESP_OK;
+}
+
+esp_err_t nvs_set_u32(nvs_handle_t h, const char *key, uint32_t value)
+{
+    (void)h;
+    if (nvs_write_fails) return ESP_ERR_INVALID_STATE;
+    int i = nvs_slot(key, true);
+    if (i < 0) return ESP_ERR_NO_MEM;
+    nvs_store[i].val = value;
+    nvs_writes++;
+    return ESP_OK;
+}
+
+esp_err_t nvs_commit(nvs_handle_t h) { (void)h; nvs_commits++; return ESP_OK; }
+void nvs_close(nvs_handle_t h) { (void)h; }
+
+static uint32_t nvs_read(const char *key)
+{
+    uint32_t v = 0;
+    CHECK(nvs_get_u32(1, key, &v) == ESP_OK);
+    return v;
+}
+
+static bool nvs_has(const char *key) { return nvs_slot(key, false) >= 0; }
+
 pb_ntc_status_t pb_ntc_last_status(pb_ntc_channel_t channel)
 {
     return channel == PB_NTC_CHAMBER ? chamber_status : ptc_status;
@@ -103,8 +167,17 @@ float pb_ntc_smoothed_c(pb_ntc_channel_t channel)
     return channel == PB_NTC_CHAMBER ? chamber_c : ptc_c;
 }
 
+static void reset_nvs(void)
+{
+    memset(nvs_store, 0, sizeof nvs_store);
+    nvs_write_fails = false;
+    nvs_commits = 0;
+    nvs_writes = 0;
+}
+
 static void reset_fixture(void)
 {
+    reset_nvs();
     fake_now_us = 1000000;
     heater_target = 0.0f;
     heater_on = false;
@@ -345,6 +418,144 @@ static void test_external_fault_sync_off_and_clear(void)
     CHECK(snap.effective_target_c == 0.0f);
 }
 
+static void test_params_default_and_load_never_arms(void)
+{
+    reset_fixture();
+    pb_policy_load_params();
+
+    pb_policy_params_t p;
+    pb_policy_get_params(&p);
+    CHECK(p.manual_target_c == 50.0f);
+    CHECK(p.auto_target_c == 60.0f);
+    CHECK(p.auto_bed_threshold_c == 100.0f);
+    CHECK(p.dry_target_c == 60.0f);
+    CHECK(p.dry_hours == 12);
+
+    // Loading parameters must never arm heat or change the mode.
+    pb_policy_snapshot_t snap = snapshot();
+    CHECK(snap.mode == PB_MODE_OFF);
+    CHECK(snap.effective_target_c == 0.0f);
+    CHECK(!snap.lease_active);
+    // Defaults match an empty flash, so there is nothing to write back.
+    CHECK(!pb_policy_persist_pending());
+    CHECK(nvs_writes == 0);
+}
+
+static void test_params_clamp_corrupt_values(void)
+{
+    reset_fixture();
+    CHECK(nvs_set_u32(1, "md_last", 9000) == ESP_OK);      // 90 C -> ceiling 70
+    CHECK(nvs_set_u32(1, "md_auto_tgt", 100) == ESP_OK);   // 1 C  -> floor 30
+    CHECK(nvs_set_u32(1, "md_auto_bed", 50000) == ESP_OK); // 500 C -> 120
+    CHECK(nvs_set_u32(1, "md_dry_hrs", 99) == ESP_OK);     // out of range -> 12
+    pb_policy_load_params();
+
+    pb_policy_params_t p;
+    pb_policy_get_params(&p);
+    CHECK(p.manual_target_c == 70.0f);
+    CHECK(p.auto_target_c == 30.0f);
+    CHECK(p.auto_bed_threshold_c == 120.0f);
+    CHECK(p.dry_hours == 12);
+    CHECK(snapshot().mode == PB_MODE_OFF);
+}
+
+static void test_params_persist_only_changed_keys(void)
+{
+    reset_fixture();
+    pb_policy_load_params();
+
+    CHECK(pb_policy_set_power_on(
+        45.0f, PB_SOURCE_WEB, "tab", PB_POLICY_REVISION_ANY, NULL)
+        == PB_POLICY_OK);
+    CHECK(pb_policy_persist_pending());
+    CHECK(nvs_read("md_last") == 4500);
+    CHECK(nvs_commits == 1);
+    // Nothing left dirty, so a second drain is a no-op.
+    CHECK(!pb_policy_persist_pending());
+    CHECK(nvs_commits == 1);
+
+    unsigned before = nvs_writes;
+    CHECK(pb_policy_set_auto(
+        55.0f, 90.0f, PB_SOURCE_WEB, PB_POLICY_REVISION_ANY) == PB_POLICY_OK);
+    CHECK(pb_policy_persist_pending());
+    CHECK(nvs_read("md_auto_tgt") == 5500);
+    CHECK(nvs_read("md_auto_bed") == 9000);
+    // Only the two AUTO keys changed -- md_last must not be rewritten.
+    CHECK(nvs_writes - before == 2);
+
+    CHECK(pb_policy_start_drying(
+        50.0f, 3, PB_SOURCE_WEB, PB_POLICY_REVISION_ANY) == PB_POLICY_OK);
+    CHECK(pb_policy_persist_pending());
+    CHECK(nvs_read("md_dry_tgt") == 5000);
+    CHECK(nvs_read("md_dry_hrs") == 3);
+}
+
+static void test_params_persist_canonical_post_clamp_value(void)
+{
+    reset_fixture();
+    pb_policy_load_params();
+    // Ceiling below the request, and distinct from the 50 C default so a write
+    // is genuinely required.
+    heater_max_target_c = 55.0f;
+
+    CHECK(pb_policy_set_power_on(
+        70.0f, PB_SOURCE_WEB, "tab", PB_POLICY_REVISION_ANY, NULL)
+        == PB_POLICY_OK);
+    CHECK(pb_policy_persist_pending());
+    // The clamped value reaches flash, not the raw 70 that was requested.
+    CHECK(nvs_read("md_last") == 5500);
+    pb_policy_params_t p;
+    pb_policy_get_params(&p);
+    CHECK(p.manual_target_c == 55.0f);
+}
+
+static void test_params_failed_write_stays_dirty_and_retries(void)
+{
+    reset_fixture();
+    pb_policy_load_params();
+
+    nvs_write_fails = true;
+    CHECK(pb_policy_set_power_on(
+        65.0f, PB_SOURCE_WEB, "tab", PB_POLICY_REVISION_ANY, NULL)
+        == PB_POLICY_OK);
+    CHECK(pb_policy_persist_pending());     // attempted
+    CHECK(!nvs_has("md_last"));             // but nothing landed
+    CHECK(nvs_commits == 0);                // and no commit on a failed write
+
+    nvs_write_fails = false;
+    CHECK(pb_policy_persist_pending());     // still dirty -> retried
+    CHECK(nvs_read("md_last") == 6500);
+    CHECK(nvs_commits == 1);
+    CHECK(!pb_policy_persist_pending());
+}
+
+static void test_params_survive_reboot_but_mode_does_not(void)
+{
+    reset_fixture();
+    pb_policy_load_params();
+    CHECK(pb_policy_start_drying(
+        45.0f, 6, PB_SOURCE_WEB, PB_POLICY_REVISION_ANY) == PB_POLICY_OK);
+    CHECK(pb_policy_persist_pending());
+    CHECK(snapshot().mode == PB_MODE_DRYING);
+
+    // Reboot: re-init policy WITHOUT clearing the fake flash.
+    CHECK(pb_policy_init() == ESP_OK);
+    pb_policy_load_params();
+
+    pb_policy_params_t p;
+    pb_policy_get_params(&p);
+    CHECK(p.dry_target_c == 45.0f);
+    CHECK(p.dry_hours == 6);
+
+    // ...but the active mode, target, and deadline are gone.
+    pb_policy_snapshot_t snap = snapshot();
+    CHECK(snap.mode == PB_MODE_OFF);
+    CHECK(snap.source == PB_SOURCE_BOOT);
+    CHECK(!snap.drying);
+    CHECK(snap.effective_target_c == 0.0f);
+    CHECK(!snap.lease_active);
+}
+
 // Power = device alive (blink on fault); On/Auto/Dry each carry their own mode,
 // with Auto distinguishing armed-but-waiting from actually engaged.
 static void test_panel_leds_track_mode(void)
@@ -427,6 +638,12 @@ int main(void)
     test_external_fault_sync_off_and_clear();
     test_fault_clear_requires_current_revision();
     test_panel_leds_track_mode();
+    test_params_default_and_load_never_arms();
+    test_params_clamp_corrupt_values();
+    test_params_persist_only_changed_keys();
+    test_params_persist_canonical_post_clamp_value();
+    test_params_failed_write_stays_dirty_and_retries();
+    test_params_survive_reboot_but_mode_does_not();
     puts("pb_policy host tests: PASS");
     return 0;
 }

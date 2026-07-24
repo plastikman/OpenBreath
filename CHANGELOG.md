@@ -8,6 +8,15 @@ below into the GitHub Release notes.
 ## [Unreleased]
 
 ### Added
+- **Remembered mode parameters (persisted).** The last accepted manual target,
+  automatic target and bed threshold, and drying target and duration are now
+  stored in NVS and reported as `params` in `GET /api/v2/state`, so the UI
+  pre-fills from the device and a mode can be re-armed without re-entering
+  values. Closes a gap left by v0.3.0, which documented this persistence but
+  never implemented it. Writes are serialized through a single worker task and
+  record the clamped value the device actually applied. Parameters remain the
+  **only** policy state that survives a reboot — the active mode, target,
+  deadline, and lease still do not, so the device always boots OFF.
 - **Serial hardware-in-the-loop harness (`pb_hil` / `tools/hil.py`).** A
   line-delimited JSON console for injecting chamber/PTC readings, sensor faults,
   printer environment, and zero-cross events, and for reading back heater demand,
