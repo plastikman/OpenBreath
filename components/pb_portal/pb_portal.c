@@ -22,6 +22,8 @@ static const char *TAG = "pb_portal";
 // STA-mode dashboard: the gzip of components/pb_portal/www/app.html, embedded
 // into flash rodata at build time (see CMakeLists.txt target_add_binary_data).
 // Served verbatim as a single Content-Encoding: gzip response.
+// cppcheck-suppress syntaxError  // GNU asm() label on an extern decl (embedded
+// binary symbol) is valid GCC; cppcheck's C parser does not model it.
 extern const uint8_t app_html_gz_start[] asm("_binary_app_html_gz_start");
 extern const uint8_t app_html_gz_end[]   asm("_binary_app_html_gz_end");
 // 32x32 PNG of the DragonBreath dragon mark, embedded from www/favicon.png (see
