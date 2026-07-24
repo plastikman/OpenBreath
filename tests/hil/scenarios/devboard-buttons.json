@@ -22,7 +22,7 @@
 
     {
       "name": "On button pressed (level low)",
-      "send": {"cmd": "button", "id": "on", "level": 0}
+      "send": {"cmd": "button", "button": "on", "level": 0}
     },
     {"name": "let debounce settle", "wait_s": 0.1},
     {
@@ -32,7 +32,7 @@
     },
     {
       "name": "On button released -> short press arms POWER_ON from BUTTON",
-      "send": {"cmd": "button", "id": "on", "level": 1}
+      "send": {"cmd": "button", "button": "on", "level": 1}
     },
     {"name": "let release settle + control tick", "wait_s": 0.7},
     {
@@ -49,12 +49,12 @@
 
     {
       "name": "On pressed again (toggle off) - press",
-      "send": {"cmd": "button", "id": "on", "level": 0}
+      "send": {"cmd": "button", "button": "on", "level": 0}
     },
     {"name": "settle", "wait_s": 0.1},
     {
       "name": "On released - toggles OFF",
-      "send": {"cmd": "button", "id": "on", "level": 1}
+      "send": {"cmd": "button", "button": "on", "level": 1}
     },
     {"name": "settle + tick", "wait_s": 0.7},
     {
@@ -65,10 +65,10 @@
 
     {
       "name": "Dry short press arms DRYING",
-      "send": {"cmd": "button", "id": "dry", "level": 0}
+      "send": {"cmd": "button", "button": "dry", "level": 0}
     },
     {"name": "settle", "wait_s": 0.1},
-    {"name": "Dry release", "send": {"cmd": "button", "id": "dry", "level": 1}},
+    {"name": "Dry release", "send": {"cmd": "button", "button": "dry", "level": 1}},
     {"name": "settle + tick", "wait_s": 0.7},
     {
       "name": "drying armed from button",
@@ -86,7 +86,7 @@
 
     {
       "name": "Auto long-press: press",
-      "send": {"cmd": "button", "id": "auto", "level": 0}
+      "send": {"cmd": "button", "button": "auto", "level": 0}
     },
     {"name": "hold past the 2 s long-press threshold", "wait_s": 2.3},
     {
@@ -107,15 +107,15 @@
       "send": {"cmd": "heartbeat", "lease_id": "$lease"},
       "expect": {"ok": false, "result": "stale_lease"}
     },
-    {"name": "release the Auto button", "send": {"cmd": "button", "id": "auto", "level": 1}},
+    {"name": "release the Auto button", "send": {"cmd": "button", "button": "auto", "level": 1}},
     {"name": "settle", "wait_s": 0.1},
 
     {
       "name": "Power long-press while faulted attempts a clear",
-      "send": {"cmd": "button", "id": "power", "level": 0}
+      "send": {"cmd": "button", "button": "power", "level": 0}
     },
     {"name": "hold past the long-press threshold", "wait_s": 2.3},
-    {"name": "release Power", "send": {"cmd": "button", "id": "power", "level": 1}},
+    {"name": "release Power", "send": {"cmd": "button", "button": "power", "level": 1}},
     {"name": "settle + tick", "wait_s": 0.7},
     {
       "name": "fault cleared, device idle at off",

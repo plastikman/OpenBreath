@@ -21,7 +21,8 @@ Decisions locked with the user: **phased plan**, **all four buttons usable**
 > in v0.3.0 & hardware-validated — **except B2** (thermal-purge + NVS-persisted fault
 > latch), deferred; **B5's params-only NVS persistence, mismarked done in v0.3.0, actually
 > shipped in the Phase C series** · Phase C 🟡 code complete, in review (LED semantics, B5
-> params, and all four buttons landed as three stacked PRs; on-device bench sign-off pending)
+> params, and all four buttons landed as three stacked PRs; Panda and devboard
+> functional benches passed, scope-grade panic-off latency sign-off pending)
 > · Phase D 🟡 partial (v2 dashboard covers D2/D3; D4 parity matrix documented; D1 shell open)
 > · Phase E 🟡 partial (release/build CI + host tests + UART dev-board HIL qualified; broader
 > static-analysis/sim and real-Panda matrix open). **Next candidates:** B2 safety hardening,
@@ -282,8 +283,9 @@ transport/state adapter.
 > caveat:** Power(9)/Auto(8)/Dry(2) are strapping pins (GPIO9 = ROM download-mode) —
 > the driver ignores a button held at power-on until it releases; On(10) is the only
 > non-strap. The real Panda functional checklist passed on 2026-07-24 at
-> `175e187`. **Still open:** the scope-grade < 20 ms panic-off latency
-> measurement and the scripted devboard-button scenario on attached hardware.
+> `175e187`. The scripted UART devboard-button scenario also passed on physical
+> ESP32-C3 hardware on 2026-07-24 with mains GPIOs compiled out. **Still open:**
+> the scope-grade < 20 ms panic-off latency measurement.
 
 **C1. `pb_buttons` (new component).** Port `pv_button`'s state machine (10 ms poll task, 20 ms debounce, long-press 2 s) behind a per-button table with an `active_low` field. v1 table = **all four**: `PB_GPIO_BTN_POWER`=9, `_AUTO`=8, `_ON`=10, `_DRY`=2 — each `GPIO_MODE_INPUT` + internal **pull-up** (never pull-down — 9/8/2 are straps that must be high at reset), poll-only. API `pb_buttons_start(cb)`, `pb_button_cb_t(id, ev)` with `id ∈ {POWER, AUTO, ON, DRY}`; SHORT on release, LONG once (suppress trailing short). REQUIRES `driver pb_board` (decoupled — no heater/policy link).
 
@@ -342,6 +344,15 @@ a hard reset produced no short/long event, release was a no-op, and a subsequent
 fresh tap worked normally. Sensors remained nominal and no spurious safety trip
 occurred. The test used below-ambient remembered targets, so the SSR stayed low;
 the scope-grade energized SSR latency measurement remains open.
+
+The scripted `tests/hil/scenarios/devboard-buttons.json` scenario passed over
+the UART HIL transport on a physical ESP32-C3 devboard on 2026-07-24. It
+exercised raw injected button levels through the production debounce and
+long-press state machine, short-press mode toggles, remote-lease invalidation,
+panic-off attribution and fault indication, stale-lease rejection, and
+Power-long fault recovery. The final snapshot was OFF with no fault, lease,
+demand, heater output, fan output, or pressed button. The HIL state confirmed
+`mains_gpio_compiled_out=true` throughout.
 
 ---
 

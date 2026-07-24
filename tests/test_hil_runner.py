@@ -58,6 +58,13 @@ class HilRunnerTest(unittest.TestCase):
             target = raw.get("targets", ["devboard", "panda"])[0]
             loaded = hil.load_scenario(path, target)
             self.assertTrue(loaded["steps"], path)
+            for step in loaded["steps"]:
+                if "send" in step:
+                    self.assertNotIn(
+                        "id",
+                        step["send"],
+                        f"{path}: request id is reserved for runner correlation",
+                    )
 
     def test_suite_only_loads_scenarios_for_target(self):
         scenarios = hil.load_suite_scenarios("devboard")

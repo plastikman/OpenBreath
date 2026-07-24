@@ -393,6 +393,7 @@ Devboard-only injection:
 | `sensor` | `channel`, `status`, optional `temp_c` | Inject chamber/PTC value or `open`, `short`, `uninit` |
 | `env` | `connected`, `bed_c` | Inject Moonraker connection and bed temperature |
 | `zero_cross` | optional `count`, `interval_us` | Inject fan zero-cross diagnostics |
+| `button` | `button`, `level` | Inject a raw level (`0` pressed, `1` released) for `power`, `auto`, `on`, or `dry` |
 
 Every response includes the authoritative policy snapshot: mode, source,
 revision, targets, heater demand/output, fan percentage, fault/inhibit state,

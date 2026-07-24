@@ -321,13 +321,14 @@ static void handle_request(const cJSON *request)
     } else if (strcmp(cmd->valuestring, "button") == 0) {
         // Inject a RAW electrical level so the real debounce/long-press timing
         // in pb_buttons runs -- scenarios drive levels + waits, not events.
-        const cJSON *id_item = cJSON_GetObjectItemCaseSensitive(request, "id");
+        const cJSON *button_item =
+            cJSON_GetObjectItemCaseSensitive(request, "button");
         double level = 0.0;
         pb_button_id_t id;
-        bool valid = cJSON_IsString(id_item)
+        bool valid = cJSON_IsString(button_item)
             && json_number(request, "level", &level)
             && (level == 0.0 || level == 1.0)
-            && parse_button_id(id_item->valuestring, &id);
+            && parse_button_id(button_item->valuestring, &id);
         if (!valid) {
             response_error(response, "invalid_button");
             emit(response);
