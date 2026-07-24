@@ -31,7 +31,7 @@ OEM parity → [`docs/OEM_PARITY.md`](docs/OEM_PARITY.md) · hardware →
 | `pb_heater` | ✅ Bang-bang + full safety cutoffs; SSR confirmed, heat cycle validated on hardware |
 | `pb_fan` | ✅ TRIAC **on/off held-gate** (stock model — the gate is never PWM'd/phase-chopped) |
 | `pb_policy` | ✅ Authoritative mode/target/lease state machine |
-| Network core: `pv_wifi` / `pv_evlog` / `pv_moonraker` | ✅ Referenced from OpenVent (submodule); WiFi + Moonraker validated on hardware |
+| Network core: `pb_wifi` / `pb_evlog` / `pb_moonraker` | ✅ Vendored locally (derived from OpenVent, MIT — see [VENDORING.md](VENDORING.md)); WiFi + Moonraker validated on hardware |
 | Portal / status dashboard | ✅ Captive provisioning + v2 dashboard (manual / auto / dry / advanced cards, SSE-driven) |
 | Status LEDs (`pb_leds`) | ✅ All four driven from policy: Power = device-alive/fault, On/Auto/Dry = active mode (Auto slow-blinks when armed but waiting). |
 | Front-panel buttons (`pb_buttons`) | ✅ All four polled with debounce + short/long-press; short toggles the labeled mode, 2 s long-press = panic-off (Power-long while faulted = fault clear). Real-Panda + devboard-HIL benches passed. |
@@ -43,10 +43,11 @@ OEM parity → [`docs/OEM_PARITY.md`](docs/OEM_PARITY.md) · hardware →
 | HIL (`pb_hil` / `tools/hil.py`) | ✅ CH341 devboard suite and non-heating real-Panda UART build/flash/no-flash workflows qualified on hardware; native-USB runtime pending on the tested devboard |
 
 **Shared-core boundary:** board-agnostic infrastructure (WiFi, event log, Moonraker
-client) is referenced from the [OpenVent](https://github.com/justinh-rahb/OpenVent)
-family via `external/OpenVent` (git submodule) + `EXTRA_COMPONENT_DIRS`. Everything
-device-specific — the board map, sensors, heater/fan actuation, and the portal /
-LED / button UI — stays in this repo.
+client) derives from the [OpenVent](https://github.com/justinh-rahb/OpenVent) family
+but is now **vendored locally** as `components/pb_wifi` / `pb_evlog` / `pb_moonraker`
+(no submodule) — see [VENDORING.md](VENDORING.md) for provenance and the `pv_`→`pb_`
+rename. Everything device-specific — the board map, sensors, heater/fan actuation,
+and the portal / LED / button UI — is likewise first-party in this repo.
 
 ## Screenshots
 <p>
@@ -118,7 +119,7 @@ Fully reverse-engineered from the stock firmware — a low-side resistance divid
 ## Build
 Requires ESP-IDF v5.3+.
 ```bash
-git clone --recurse-submodules https://github.com/plastikman/DragonBreath
+git clone https://github.com/plastikman/DragonBreath
 idf.py set-target esp32c3
 idf.py build
 ```
@@ -148,7 +149,7 @@ unzip, and run `python3 flash.py --build-dir .` — the same stock-backup-first 
 A single-image `dragonbreath-<ver>-factory.bin` is also published for
 `esptool.py --chip esp32c3 write_flash 0x0 …`, but that path does **not** back up
 stock — use it only if you already have a backup. Each release also ships a
-`manifest.json` (source SHA, ESP-IDF version, submodule + per-artifact SHA-256).
+`manifest.json` (source SHA, ESP-IDF version, vendored-core provenance + per-artifact SHA-256).
 
 First boot with no stored WiFi starts an `DragonBreath_XXXX` AP + captive portal for
 provisioning. The AP password is **`987654321`** (same as the stock Panda). Connect

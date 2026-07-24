@@ -2,7 +2,7 @@
 #include "pb_portal.h"
 #include "pb_dns.h"
 #include "pb_httpd.h"
-#include "pv_wifi.h"
+#include "pb_wifi.h"
 
 #include "esp_http_server.h"
 #include "esp_log.h"
@@ -358,15 +358,15 @@ static esp_err_t favicon_ico(httpd_req_t *req)
 // on setup; in STA mode serve the live dashboard SPA.
 static esp_err_t root_page(httpd_req_t *req)
 {
-    if (pv_wifi_state() == PV_WIFI_STATE_AP_PORTAL) return config_page(req);
+    if (pb_wifi_state() == PB_WIFI_STATE_AP_PORTAL) return config_page(req);
     return app_page(req);
 }
 
 static esp_err_t scan_json(httpd_req_t *req)
 {
-    wifi_ap_record_t recs[PV_WIFI_SCAN_MAX];
-    int n = pv_wifi_get_scan_results(recs, PV_WIFI_SCAN_MAX);
-    if (n == 0 && !pv_wifi_is_scanning()) pv_wifi_scan_start();
+    wifi_ap_record_t recs[PB_WIFI_SCAN_MAX];
+    int n = pb_wifi_get_scan_results(recs, PB_WIFI_SCAN_MAX);
+    if (n == 0 && !pb_wifi_is_scanning()) pb_wifi_scan_start();
 
     // cJSON handles comma placement and escaping (quotes/backslashes/control chars),
     // so a skipped/odd SSID can't produce invalid JSON.
@@ -387,7 +387,7 @@ static esp_err_t scan_json(httpd_req_t *req)
 
 static esp_err_t rescan_post(httpd_req_t *req)
 {
-    pv_wifi_scan_start();
+    pb_wifi_scan_start();
     httpd_resp_set_status(req, "204 No Content");
     return httpd_resp_send(req, NULL, 0);
 }
@@ -397,7 +397,7 @@ static esp_err_t save_post(httpd_req_t *req)
     // Provisioning is open only in AP/setup mode (no credentials yet to send a
     // header from). Once joined to a network (STA), rewriting Wi-Fi config is a
     // mutating control action, so require the CSRF header like the other POSTs.
-    if (pv_wifi_state() != PV_WIFI_STATE_AP_PORTAL && !pb_httpd_auth_ok(req)) {
+    if (pb_wifi_state() != PB_WIFI_STATE_AP_PORTAL && !pb_httpd_auth_ok(req)) {
         httpd_resp_set_status(req, "403 Forbidden");
         httpd_resp_set_type(req, "application/json");
         return httpd_resp_sendstr(req, "{\"error\":\"missing/invalid X-DragonBreath-Auth header\"}");
@@ -442,7 +442,7 @@ static esp_err_t save_post(httpd_req_t *req)
         "<h2>Saved &#10003;</h2><p>Rebooting and joining your Wi-Fi&hellip;</p>"
         "<p><small>This page will disconnect \xE2\x80\x94 that's expected.</small></p>");
     ESP_LOGI(TAG, "provisioned SSID='%s' moonraker='%s' — rebooting", chosen, mk_host);
-    pv_wifi_save_creds_and_reboot(chosen, pass);   // writes ssid/password + reboots
+    pb_wifi_save_creds_and_reboot(chosen, pass);   // writes ssid/password + reboots
     return ESP_OK;                                  // unreachable
 }
 
@@ -466,11 +466,11 @@ esp_err_t pb_portal_start(void)
     httpd_register_uri_handler(s, &favic);  // before the catch-all so /favicon.ico != SPA
     httpd_register_uri_handler(s, &root);   // catch-all LAST (captive-portal probes)
 
-    if (pv_wifi_state() == PV_WIFI_STATE_AP_PORTAL) {
-        pv_wifi_ap_config_t ap;
-        pv_wifi_get_ap_config(&ap);
+    if (pb_wifi_state() == PB_WIFI_STATE_AP_PORTAL) {
+        pb_wifi_ap_config_t ap;
+        pb_wifi_get_ap_config(&ap);
         pb_dns_start(htonl(ap.ip));
-        pv_wifi_scan_start();
+        pb_wifi_scan_start();
         ESP_LOGI(TAG, "AP captive portal active");
     } else {
         ESP_LOGI(TAG, "config portal available (STA mode)");

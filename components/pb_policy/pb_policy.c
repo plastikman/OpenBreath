@@ -6,7 +6,7 @@
 #include "pb_ntc.h"
 #include "pb_leds.h"
 #include "pb_buttons.h"
-#include "pv_evlog.h"
+#include "pb_evlog.h"
 
 #include "esp_log.h"
 #include "esp_random.h"
@@ -666,14 +666,14 @@ void pb_policy_on_button(pb_button_id_t id, pb_button_event_t ev)
             // A physical actor always wins, so revision-any is correct here.
             pb_policy_result_t r =
                 pb_policy_clear_fault(PB_SOURCE_BUTTON, PB_POLICY_REVISION_ANY);
-            pv_evlog_add("btn: power long -> clear fault (%s)",
+            pb_evlog_add("btn: power long -> clear fault (%s)",
                          pb_policy_result_str(r));
             return;
         }
         pb_policy_request_panic_off(PB_SOURCE_BUTTON, "button panic-off");
         // The event log can wait on its diagnostic mutex, so record only after
         // the heater is latched off and the control task has been notified.
-        pv_evlog_add("btn: %s long -> panic-off", button_str(id));
+        pb_evlog_add("btn: %s long -> panic-off", button_str(id));
         return;
     }
 
@@ -683,30 +683,30 @@ void pb_policy_on_button(pb_button_id_t id, pb_button_event_t ev)
         case PB_BUTTON_ON:
             r = button_toggle_mode(PB_MODE_POWER_ON);
             if (r == PB_POLICY_OK) {
-                pv_evlog_add("btn: on -> %s",
+                pb_evlog_add("btn: on -> %s",
                              pb_policy_mode_str(pb_policy_get_mode()));
             } else {
-                pv_evlog_add("btn: on rejected (%s)",
+                pb_evlog_add("btn: on rejected (%s)",
                              pb_policy_result_str(r));
             }
             break;
         case PB_BUTTON_AUTO:
             r = button_toggle_mode(PB_MODE_AUTO);
             if (r == PB_POLICY_OK) {
-                pv_evlog_add("btn: auto -> %s",
+                pb_evlog_add("btn: auto -> %s",
                              pb_policy_mode_str(pb_policy_get_mode()));
             } else {
-                pv_evlog_add("btn: auto rejected (%s)",
+                pb_evlog_add("btn: auto rejected (%s)",
                              pb_policy_result_str(r));
             }
             break;
         case PB_BUTTON_DRY:
             r = button_toggle_mode(PB_MODE_DRYING);
             if (r == PB_POLICY_OK) {
-                pv_evlog_add("btn: dry -> %s",
+                pb_evlog_add("btn: dry -> %s",
                              pb_policy_mode_str(pb_policy_get_mode()));
             } else {
-                pv_evlog_add("btn: dry rejected (%s)",
+                pb_evlog_add("btn: dry rejected (%s)",
                              pb_policy_result_str(r));
             }
             break;
@@ -714,10 +714,10 @@ void pb_policy_on_button(pb_button_id_t id, pb_button_event_t ev)
             // Master OFF. Already-off is a deliberate no-op: log it but do not
             // bump the revision, so an idle tap does not churn observers.
             if (pb_policy_get_mode() == PB_MODE_OFF) {
-                pv_evlog_add("btn: power (already off)");
+                pb_evlog_add("btn: power (already off)");
             } else {
                 pb_policy_set_mode_off(PB_SOURCE_BUTTON);
-                pv_evlog_add("btn: power -> off");
+                pb_evlog_add("btn: power -> off");
             }
             break;
         default:

@@ -7,6 +7,17 @@ below into the GitHub Release notes.
 
 ## [Unreleased]
 
+### Changed
+- **Vendored the OpenVent shared core locally (no more submodule).** The three
+  board-agnostic components that were built from the `external/OpenVent` git
+  submodule (`pv_evlog`, `pv_wifi`, `pv_moonraker`) are now first-party components
+  in `components/`, renamed `pb_evlog` / `pb_wifi` / `pb_moonraker` to match the
+  rest of the codebase. The submodule, `.gitmodules`, and `EXTRA_COMPONENT_DIRS`
+  are removed; CI no longer checks out submodules; the release manifest records
+  the vendored-core provenance instead. `git clone` no longer needs
+  `--recurse-submodules`. Derived from OpenVent (MIT) — see
+  [VENDORING.md](VENDORING.md). No firmware behavior change.
+
 ## [0.6.0] - 2026-07-24
 
 ### Added

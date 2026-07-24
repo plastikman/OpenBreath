@@ -4,7 +4,7 @@
 // Safety-first init: the heater SSR is forced OFF before anything can request
 // heat, and the control/telemetry loop is started BEFORE networking so it runs
 // regardless of WiFi/Moonraker state (network bring-up must never gate the safety
-// loop). Networking uses the OpenVent shared core (pv_wifi + pv_moonraker):
+// loop). Networking uses the OpenVent shared core (pb_wifi + pb_moonraker):
 // connect to WiFi, dial into the printer's Moonraker over WebSocket, feed printer
 // state to pb_policy.
 //
@@ -27,14 +27,14 @@
 #include "pb_leds.h"
 #include "pb_buttons.h"
 #include "pb_hil.h"
-#include "pv_evlog.h"
+#include "pb_evlog.h"
 
 #include "esp_wifi.h"
 #include "esp_mac.h"
 #include "esp_netif.h"
 #include "mdns.h"
-#include "pv_wifi.h"
-#include "pv_moonraker.h"
+#include "pb_wifi.h"
+#include "pb_moonraker.h"
 
 #include "pb_httpd.h"
 #include "pb_portal.h"
@@ -53,9 +53,9 @@ static const char *TAG = "dragonbreath";
 #define PB_TICK_PERIOD_MS 500
 
 // Set true once the network components have been started, so the control loop
-// doesn't touch pv_* state before it's initialized.
+// doesn't touch pb_* state before it's initialized.
 static volatile bool s_net_up = false;
-// Set true only if pv_moonraker_start() succeeded — never query a client that
+// Set true only if pb_moonraker_start() succeeded — never query a client that
 // failed to initialize (its internal state/mutex may be unset).
 static volatile bool s_mk_up = false;
 
@@ -77,7 +77,7 @@ static void button_cb(pb_button_id_t id, pb_button_event_t ev)
     pb_policy_on_button(id, ev);
 }
 
-// Brand the captive-portal AP as "DragonBreath_XXXX". The shared pv_wifi reads the
+// Brand the captive-portal AP as "DragonBreath_XXXX". The shared pb_wifi reads the
 // AP SSID from NVS (key "ap_ssid"), so we override its "OpenVent_" default this way
 // without patching the shared component. We also migrate the previous "OpenPanda_"
 // default (pre-DragonBreath rebrand) so an already-provisioned device adopts the new
@@ -107,9 +107,9 @@ static void brand_ap(void)
     ESP_LOGI(TAG, "AP SSID default set: %s", ssid);
 }
 
-// Override the shared pv_wifi mDNS/netif hostname ("OpenVent") so the device
+// Override the shared pb_wifi mDNS/netif hostname ("OpenVent") so the device
 // advertises as dragonbreath.local, WITHOUT patching the OpenVent submodule.
-// Call AFTER pv_wifi_start() (which runs mdns_init + sets the OpenVent default);
+// Call AFTER pb_wifi_start() (which runs mdns_init + sets the OpenVent default);
 // these calls just update the already-registered records. Best-effort / log-only:
 // a failure only means the device keeps the OpenVent.local name — it never affects
 // the safety loop or WiFi. (Interim until the shared core exposes a hostname API —
@@ -141,7 +141,7 @@ static void nvs_init(void)
 // Dev-only: seed WiFi creds + Moonraker config into the NVS layout the shared
 // components load at start (namespace app_nvs; keys ssid/password + mk_host/mk_port).
 // This is what the portal would normally write. IMPORTANT: seed via NVS and let
-// pv_moonraker_start() load it — do NOT call pv_moonraker_set_config() before
+// pb_moonraker_start() load it — do NOT call pb_moonraker_set_config() before
 // _start(): set_config takes an internal mutex that _start() creates, so calling
 // it first dereferences a NULL semaphore handle (asserts / reboot loop).
 static void seed_dev_config(void)
@@ -190,10 +190,10 @@ static void control_task(void *arg)
     }
 
     for (;;) {
-        pv_moonraker_status_t st = {0};
+        pb_moonraker_status_t st = {0};
 #ifndef CONFIG_PB_HIL_DEVBOARD
-        if (s_net_up && s_mk_up) pv_moonraker_get_status(&st);
-        bool mk_connected = s_mk_up && st.state == PV_MK_SUBSCRIBED;
+        if (s_net_up && s_mk_up) pb_moonraker_get_status(&st);
+        bool mk_connected = s_mk_up && st.state == PB_MK_SUBSCRIBED;
         pb_policy_set_env(st.bed_temp, mk_connected);
 #endif
 
@@ -217,8 +217,8 @@ static void control_task(void *arg)
                 pb_policy_mode_str(snap.mode), pb_policy_source_str(snap.source),
                 snap.effective_target_c, snap.heater_output ? "ON" : "off",
                 snap.chamber_c, snap.ptc_c,
-                net ? (int)pv_wifi_state() : -1, (int)st.state,
-                pv_printer_state_str(st.printer), st.bed_temp,
+                net ? (int)pb_wifi_state() : -1, (int)st.state,
+                pb_printer_state_str(st.printer), st.bed_temp,
                 (unsigned long)zc, (unsigned long)zciv);
         }
 
@@ -253,7 +253,7 @@ void app_main(void)
 {
     ESP_LOGI(TAG, "DragonBreath starting");
 
-    pv_evlog_init();
+    pb_evlog_init();
     pb_board_init();
     ESP_ERROR_CHECK(pb_heater_init());     // SSR forced OFF before anything else
     ESP_ERROR_CHECK(pb_ntc_init());
@@ -297,15 +297,15 @@ void app_main(void)
     // init error (e.g. httpd_start NO_MEM under boot heap pressure) must not
     // abort/reboot and tear down the safety loop that's already running above.
     esp_err_t e;
-    if ((e = pv_wifi_start()) != ESP_OK)
-        ESP_LOGE(TAG, "pv_wifi_start: %s (continuing; safety loop unaffected)", esp_err_to_name(e));
+    if ((e = pb_wifi_start()) != ESP_OK)
+        ESP_LOGE(TAG, "pb_wifi_start: %s (continuing; safety loop unaffected)", esp_err_to_name(e));
     else
         brand_hostname();                    // advertise as dragonbreath.local
     // Mains-powered device: disable WiFi modem-sleep so the control API stays
     // responsive (power-save adds ~0.5s latency spikes to incoming requests).
     esp_wifi_set_ps(WIFI_PS_NONE);
-    if ((e = pv_moonraker_start()) != ESP_OK)
-        ESP_LOGE(TAG, "pv_moonraker_start: %s (continuing; will not query moonraker)", esp_err_to_name(e));
+    if ((e = pb_moonraker_start()) != ESP_OK)
+        ESP_LOGE(TAG, "pb_moonraker_start: %s (continuing; will not query moonraker)", esp_err_to_name(e));
     else
         s_mk_up = true;
     if ((e = pb_httpd_start()) != ESP_OK)

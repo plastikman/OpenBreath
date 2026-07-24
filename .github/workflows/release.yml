@@ -24,7 +24,6 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
-          submodules: recursive
 
       - name: Determine version
         id: ver
@@ -82,7 +81,7 @@ jobs:
           | \`dragonbreath-${VERSION}-factory.bin\` | single-file first install (flash @ 0x0) |
           | \`dragonbreath-${VERSION}.bin\` | application image for OTA |
           | \`dragonbreath-${VERSION}-install-bundle.zip\` | all components + flasher + FLASHING.txt |
-          | \`manifest.json\` | provenance (source SHA, ESP-IDF, submodule) + per-artifact SHA-256 |
+          | \`manifest.json\` | provenance (source SHA, ESP-IDF, vendored-core) + per-artifact SHA-256 |
           | \`SHA256SUMS.txt\` | \`sha256sum -c SHA256SUMS.txt\` |
           EOF
           )"
