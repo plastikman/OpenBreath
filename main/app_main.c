@@ -59,12 +59,13 @@ static volatile bool s_net_up = false;
 // failed to initialize (its internal state/mutex may be unset).
 static volatile bool s_mk_up = false;
 
-// Control-task handle, so a policy panic-off (from the button task) can wake the
-// loop immediately instead of waiting up to a full tick to drop the SSR.
+// Control-task handle, so accepted policy commands can update outputs/LEDs
+// without waiting up to a full periodic tick. Panic-off uses the same prompt
+// path to drop the SSR.
 static TaskHandle_t s_control_task;
 
 // pb_policy wake callback: a single notification. Runs on whatever task
-// requested the panic-off (the button task); keep it minimal.
+// requested the policy change (the button task); keep it minimal.
 static void control_wake(void)
 {
     if (s_control_task) xTaskNotifyGive(s_control_task);
@@ -222,13 +223,14 @@ static void control_task(void *arg)
         }
 
         // Wait for the next periodic deadline, but wake early on a notification
-        // (a policy panic-off). Guardrails so notifications can never drag or
-        // accelerate the safety schedule: the deadline is ABSOLUTE; a notify
-        // wake runs one extra full tick against the SAME deadline; only a
-        // timeout advances it (with an overrun resync). Every wake, notified or
-        // timed out, runs the complete pb_policy_tick() above — there is no
-        // partial "just drop the SSR" path. The watchdog is fed only after that
-        // successful tick, so an extra iteration keeps coverage armed.
+        // (an accepted control command or policy panic-off). Guardrails so
+        // notifications can never drag or accelerate the safety schedule: the
+        // deadline is ABSOLUTE; a notify wake runs one extra full tick against
+        // the SAME deadline; only a timeout advances it (with an overrun
+        // resync). Every wake, notified or timed out, runs the complete
+        // pb_policy_tick() above — there is no partial "just drop the SSR"
+        // path. The watchdog is fed only after that successful tick, so an
+        // extra iteration keeps coverage armed.
         // Use SIGNED deltas so the comparison stays correct across the 32-bit
         // tick-count wrap (~497 days at 100 Hz). An unsigned `next_deadline > now`
         // inverts right at the wrap and would busy-spin full ticks for up to one
@@ -266,7 +268,7 @@ void app_main(void)
     // earlier, and doing so would let a press arm a target before this task —
     // the sole actuator — is even running.
     xTaskCreate(control_task, "pb_control", 4096, NULL, 10, &s_control_task);
-    pb_policy_set_wake_cb(control_wake);     // panic-off can now wake the loop
+    pb_policy_set_wake_cb(control_wake);     // accepted commands can now wake the loop
     ESP_LOGI(TAG, "control loop running; heater held OFF (bring-up: no auto-heat)");
 
     // Bring up networking. If a start call blocks under a flaky link, the control

@@ -4,6 +4,7 @@
 #include "nvs.h"
 
 #include <math.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -114,11 +115,16 @@ static unsigned wake_calls;
 static void count_wake(void) { wake_calls++; }
 
 static bool panic_logged_before_wake;
+static char last_evlog[128];
 void pv_evlog_init(void) {}
 void pv_evlog_add(const char *fmt, ...)
 {
     if (strstr(fmt, "panic-off") && wake_calls == 0)
         panic_logged_before_wake = true;
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(last_evlog, sizeof last_evlog, fmt, ap);
+    va_end(ap);
 }
 
 // --- In-memory NVS ----------------------------------------------------------
@@ -218,6 +224,7 @@ static void reset_fixture(void)
     fan_level = 0;
     wake_calls = 0;
     panic_logged_before_wake = false;
+    last_evlog[0] = '\0';
     memset(led_pattern, 0, sizeof led_pattern);
     chamber_c = 25.0f;
     ptc_c = 25.0f;
@@ -495,6 +502,23 @@ static void test_params_clamp_corrupt_values(void)
     CHECK(snapshot().mode == PB_MODE_OFF);
 }
 
+static void test_params_load_respects_runtime_max(void)
+{
+    reset_fixture();
+    heater_max_target_c = 55.0f;
+    CHECK(nvs_set_u32(1, "md_last", 7000) == ESP_OK);
+    CHECK(nvs_set_u32(1, "md_auto_tgt", 6500) == ESP_OK);
+    CHECK(nvs_set_u32(1, "md_dry_tgt", 6000) == ESP_OK);
+    pb_policy_load_params();
+
+    pb_policy_params_t p;
+    pb_policy_get_params(&p);
+    CHECK(p.manual_target_c == 55.0f);
+    CHECK(p.auto_target_c == 55.0f);
+    CHECK(p.dry_target_c == 55.0f);
+    CHECK(snapshot().mode == PB_MODE_OFF);
+}
+
 static void test_params_persist_only_changed_keys(void)
 {
     reset_fixture();
@@ -669,6 +693,7 @@ static void test_button_short_toggles_modes(void)
 
     // On -> POWER_ON at the remembered manual target, attributed to BUTTON.
     pb_policy_on_button(PB_BUTTON_ON, PB_BUTTON_SHORT);
+    CHECK(wake_calls == 1);
     pb_policy_snapshot_t snap = snapshot();
     CHECK(snap.mode == PB_MODE_POWER_ON);
     CHECK(snap.source == PB_SOURCE_BUTTON);
@@ -676,25 +701,30 @@ static void test_button_short_toggles_modes(void)
     CHECK(!snap.lease_active);
     // Press again -> OFF.
     pb_policy_on_button(PB_BUTTON_ON, PB_BUTTON_SHORT);
+    CHECK(wake_calls == 2);
     CHECK(snapshot().mode == PB_MODE_OFF);
 
     // Auto toggles AUTO with the remembered target + threshold.
     pb_policy_on_button(PB_BUTTON_AUTO, PB_BUTTON_SHORT);
+    CHECK(wake_calls == 3);
     snap = snapshot();
     CHECK(snap.mode == PB_MODE_AUTO);
     CHECK(snap.source == PB_SOURCE_BUTTON);
     CHECK(snap.auto_bed_threshold_c == 100.0f);
     pb_policy_on_button(PB_BUTTON_AUTO, PB_BUTTON_SHORT);
+    CHECK(wake_calls == 4);
     CHECK(snapshot().mode == PB_MODE_OFF);
 
     // Dry toggles DRYING.
     pb_policy_on_button(PB_BUTTON_DRY, PB_BUTTON_SHORT);
+    CHECK(wake_calls == 5);
     snap = snapshot();
     CHECK(snap.mode == PB_MODE_DRYING);
     CHECK(snap.drying);
 
     // Power short is master OFF from any mode.
     pb_policy_on_button(PB_BUTTON_POWER, PB_BUTTON_SHORT);
+    CHECK(wake_calls == 6);
     CHECK(snapshot().mode == PB_MODE_OFF);
 }
 
@@ -704,6 +734,7 @@ static void test_button_power_short_while_off_does_not_bump_revision(void)
     pb_policy_load_params();
     uint32_t rev = snapshot().state_revision;
     pb_policy_on_button(PB_BUTTON_POWER, PB_BUTTON_SHORT);   // already OFF
+    CHECK(wake_calls == 0);
     CHECK(snapshot().state_revision == rev);                 // evlog only, no bump
     CHECK(snapshot().mode == PB_MODE_OFF);
 }
@@ -716,12 +747,67 @@ static void test_button_invalidates_remote_lease(void)
     CHECK(pb_policy_set_power_on(
         45.0f, PB_SOURCE_KLIPPER, "klippy", 1, &lease) == PB_POLICY_OK);
     CHECK(snapshot().lease_active);
+    wake_calls = 0;
 
     // A physical OFF must drop the lease and beat any later heartbeat.
     pb_policy_on_button(PB_BUTTON_POWER, PB_BUTTON_SHORT);
     CHECK(!snapshot().lease_active);
     CHECK(pb_policy_heartbeat(&lease) == PB_POLICY_STALE_LEASE);
     CHECK(snapshot().source == PB_SOURCE_BUTTON);
+    CHECK(wake_calls == 1);
+}
+
+static void test_remote_commands_wake_only_when_accepted(void)
+{
+    reset_fixture();
+    pb_policy_load_params();
+
+    CHECK(pb_policy_set_power_on(
+        45.0f, PB_SOURCE_WEB, "tab", PB_POLICY_REVISION_ANY, NULL)
+        == PB_POLICY_OK);
+    CHECK(wake_calls == 1);
+
+    pb_policy_set_mode_off(PB_SOURCE_WEB);
+    CHECK(wake_calls == 2);
+
+    CHECK(pb_policy_set_auto(
+        50.0f, 60.0f, PB_SOURCE_WEB, PB_POLICY_REVISION_ANY)
+        == PB_POLICY_OK);
+    CHECK(wake_calls == 3);
+
+    pb_policy_set_mode_off(PB_SOURCE_KLIPPER);
+    CHECK(wake_calls == 4);
+
+    CHECK(pb_policy_start_drying(
+        50.0f, 2, PB_SOURCE_KLIPPER, PB_POLICY_REVISION_ANY)
+        == PB_POLICY_OK);
+    CHECK(wake_calls == 5);
+
+    // Rejected commands do not change policy/output state and must not wake.
+    heater_fault = true;
+    heater_reason = "test fault";
+    CHECK(pb_policy_set_power_on(
+        45.0f, PB_SOURCE_WEB, "tab", PB_POLICY_REVISION_ANY, NULL)
+        == PB_POLICY_FAULT_LATCHED);
+    CHECK(wake_calls == 5);
+
+    CHECK(pb_policy_clear_fault(
+        PB_SOURCE_WEB, PB_POLICY_REVISION_ANY) == PB_POLICY_OK);
+    CHECK(wake_calls == 6);
+}
+
+static void test_button_rejection_is_logged_without_wake(void)
+{
+    reset_fixture();
+    pb_policy_load_params();
+    heater_fault = true;
+    heater_reason = "test fault";
+
+    pb_policy_on_button(PB_BUTTON_AUTO, PB_BUTTON_SHORT);
+
+    CHECK(snapshot().mode == PB_MODE_OFF);
+    CHECK(wake_calls == 0);
+    CHECK(strcmp(last_evlog, "btn: auto rejected (fault_latched)") == 0);
 }
 
 static void test_button_long_press_panic_off(void)
@@ -795,6 +881,7 @@ int main(void)
     test_panel_leds_track_mode();
     test_params_default_and_load_never_arms();
     test_params_clamp_corrupt_values();
+    test_params_load_respects_runtime_max();
     test_params_persist_only_changed_keys();
     test_params_persist_canonical_post_clamp_value();
     test_params_failed_write_stays_dirty_and_retries();
@@ -802,6 +889,8 @@ int main(void)
     test_button_short_toggles_modes();
     test_button_power_short_while_off_does_not_bump_revision();
     test_button_invalidates_remote_lease();
+    test_remote_commands_wake_only_when_accepted();
+    test_button_rejection_is_logged_without_wake();
     test_button_long_press_panic_off();
     test_button_power_long_clears_or_holds_fault();
     puts("pb_policy host tests: PASS");

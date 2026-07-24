@@ -55,7 +55,8 @@ typedef struct {
 // caller does not supply its own (front-panel buttons) and the values the UI
 // pre-fills from.  These are the ONLY policy state that survives a reboot --
 // never a mode, target, deadline, heating flag, or lease.  See
-// pb_policy_load_params().
+// pb_policy_load_params(). Target parameters are clamped to the heater's live
+// runtime-configured maximum when loaded.
 typedef struct {
     float manual_target_c;        // last accepted POWER_ON target
     float auto_target_c;          // last accepted AUTO target
@@ -181,10 +182,10 @@ void pb_policy_on_button(pb_button_id_t id, pb_button_event_t ev);
 // drops the SSR without waiting for the next periodic tick.
 void pb_policy_request_panic_off(pb_source_t source, const char *reason);
 
-// Callback invoked (outside any policy lock) whenever the policy needs the
-// control task to run a tick promptly -- currently only after a panic-off.  Keep
-// it ISR-light: a single task notification.  Optional; if unset, the change is
-// picked up on the next periodic tick.
+// Callback invoked (outside any policy lock) whenever an accepted control
+// command or safety transition needs the control task to run a tick promptly.
+// Keep it ISR-light: a single task notification. Optional; if unset, the change
+// is picked up on the next periodic tick.
 typedef void (*pb_policy_wake_fn)(void);
 void pb_policy_set_wake_cb(pb_policy_wake_fn fn);
 

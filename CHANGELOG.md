@@ -7,6 +7,14 @@ below into the GitHub Release notes.
 
 ## [Unreleased]
 
+### Fixed
+- **Prompt control feedback across every command source.** Accepted front-panel,
+  Web UI, Klipper, and HIL mode commands now wake the full control task
+  immediately instead of waiting up to 500 ms for the periodic tick, so panel
+  LEDs and outputs track authoritative state promptly. Rejected button commands
+  now log the actual policy result, and remembered mode targets are clamped to
+  the runtime-configured heater maximum as soon as they load from NVS.
+
 ## [0.4.0] - 2026-07-24
 
 Phase C — the physical front panel comes alive. All four buttons and all four

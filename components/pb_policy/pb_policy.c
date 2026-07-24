@@ -85,6 +85,11 @@ static pb_policy_wake_fn s_wake_cb;
 
 void pb_policy_set_wake_cb(pb_policy_wake_fn fn) { s_wake_cb = fn; }
 
+static void wake_control_task(void)
+{
+    if (s_wake_cb) s_wake_cb();
+}
+
 static bool source_is_remote(pb_source_t source)
 {
     return source == PB_SOURCE_WEB || source == PB_SOURCE_KLIPPER;
@@ -178,24 +183,31 @@ static float centi_to_c(uint32_t centi) { return (float)centi / 100.0f; }
 // to the default defensively.
 static float clamp_or_default(float v, float lo, float hi, float dflt)
 {
-    if (!isfinite(v)) return dflt;
+    if (!isfinite(v)) v = dflt;
     return v < lo ? lo : (v > hi ? hi : v);
 }
 
 static void params_clamp(pb_policy_params_t *p)
 {
+    // pb_heater_load_config() runs before pb_policy_load_params(), so use the
+    // live configured ceiling here. This keeps remembered/UI-prefill values
+    // inside a user-lowered maximum immediately after boot, not merely when a
+    // later command is submitted.
+    float max_target_c = clamp_or_default(
+        pb_heater_get_max_target_c(), PB_MIN_MODE_TARGET_C,
+        PB_HEATER_ABS_MAX_TARGET_C, PB_HEATER_ABS_MAX_TARGET_C);
     p->manual_target_c = clamp_or_default(
         p->manual_target_c, PB_MIN_MODE_TARGET_C,
-        PB_HEATER_ABS_MAX_TARGET_C, PB_DEFAULT_MANUAL_TARGET_C);
+        max_target_c, PB_DEFAULT_MANUAL_TARGET_C);
     p->auto_target_c = clamp_or_default(
         p->auto_target_c, PB_MIN_MODE_TARGET_C,
-        PB_HEATER_ABS_MAX_TARGET_C, PB_DEFAULT_AUTO_TARGET_C);
+        max_target_c, PB_DEFAULT_AUTO_TARGET_C);
     p->auto_bed_threshold_c = clamp_or_default(
         p->auto_bed_threshold_c, PB_AUTO_BED_MIN_C,
         PB_AUTO_BED_MAX_C, PB_DEFAULT_AUTO_BED_C);
     p->dry_target_c = clamp_or_default(
         p->dry_target_c, PB_MIN_MODE_TARGET_C,
-        PB_HEATER_ABS_MAX_TARGET_C, PB_DEFAULT_DRY_TARGET_C);
+        max_target_c, PB_DEFAULT_DRY_TARGET_C);
     if (p->dry_hours == 0 || p->dry_hours > PB_DRYING_MAX_HOURS)
         p->dry_hours = PB_DEFAULT_DRY_HOURS;
 }
@@ -417,6 +429,7 @@ pb_policy_result_t pb_policy_set_power_on(
     s.params.manual_target_c = s.requested_target_c;   // post-clamp
     s.params_dirty = true;
     xSemaphoreGive(s_lock);
+    wake_control_task();
     params_notify();
     return PB_POLICY_OK;
 }
@@ -452,6 +465,7 @@ pb_policy_result_t pb_policy_set_auto(
     s.params.auto_bed_threshold_c = bed_threshold_c;
     s.params_dirty = true;
     xSemaphoreGive(s_lock);
+    wake_control_task();
     params_notify();
     return PB_POLICY_OK;
 }
@@ -490,6 +504,7 @@ pb_policy_result_t pb_policy_start_drying(
     s.params.dry_hours = hours;
     s.params_dirty = true;
     xSemaphoreGive(s_lock);
+    wake_control_task();
     params_notify();
     return PB_POLICY_OK;
 }
@@ -500,6 +515,7 @@ void pb_policy_set_mode_off(pb_source_t source)
     xSemaphoreTake(s_lock, portMAX_DELAY);
     set_off_locked(source);
     xSemaphoreGive(s_lock);
+    wake_control_task();
 }
 
 void pb_policy_stop_drying(pb_source_t source)
@@ -555,6 +571,7 @@ pb_policy_result_t pb_policy_clear_fault(
     s.last_faulted = false;
     set_off_locked(source);
     xSemaphoreGive(s_lock);
+    wake_control_task();
     return PB_POLICY_OK;
 }
 
@@ -580,7 +597,7 @@ void pb_policy_request_panic_off(pb_source_t source, const char *reason)
 
     // Drop the SSR now rather than on the next periodic tick: the control task
     // runs the full safety tick immediately on this notification.
-    if (s_wake_cb) s_wake_cb();
+    wake_control_task();
     // Keep logging after the wake: diagnostic I/O must never consume the
     // panic-off latency budget.
     ESP_LOGW(TAG, "panic-off requested: %s", reason ? reason : "(unspecified)");
@@ -600,29 +617,29 @@ static const char *button_str(pb_button_id_t id)
 // Toggle a mode: if already in `target_mode`, go OFF; otherwise arm it from the
 // remembered parameters. Runs the setter WITHOUT the policy lock (setters take
 // it themselves); source=BUTTON, revision-any (a physical actor always wins).
-static void button_toggle_mode(pb_mode_t target_mode)
+static pb_policy_result_t button_toggle_mode(pb_mode_t target_mode)
 {
     if (pb_policy_get_mode() == target_mode) {
         pb_policy_set_mode_off(PB_SOURCE_BUTTON);
-        return;
+        return PB_POLICY_OK;
     }
     pb_policy_params_t p;
     pb_policy_get_params(&p);
     switch (target_mode) {
         case PB_MODE_POWER_ON:
-            pb_policy_set_power_on(p.manual_target_c, PB_SOURCE_BUTTON,
-                                   "button", PB_POLICY_REVISION_ANY, NULL);
-            break;
+            return pb_policy_set_power_on(
+                p.manual_target_c, PB_SOURCE_BUTTON,
+                "button", PB_POLICY_REVISION_ANY, NULL);
         case PB_MODE_AUTO:
-            pb_policy_set_auto(p.auto_target_c, p.auto_bed_threshold_c,
-                               PB_SOURCE_BUTTON, PB_POLICY_REVISION_ANY);
-            break;
+            return pb_policy_set_auto(
+                p.auto_target_c, p.auto_bed_threshold_c,
+                PB_SOURCE_BUTTON, PB_POLICY_REVISION_ANY);
         case PB_MODE_DRYING:
-            pb_policy_start_drying(p.dry_target_c, p.dry_hours,
-                                   PB_SOURCE_BUTTON, PB_POLICY_REVISION_ANY);
-            break;
+            return pb_policy_start_drying(
+                p.dry_target_c, p.dry_hours,
+                PB_SOURCE_BUTTON, PB_POLICY_REVISION_ANY);
         default:
-            break;
+            return PB_POLICY_INVALID;
     }
 }
 
@@ -649,18 +666,37 @@ void pb_policy_on_button(pb_button_id_t id, pb_button_event_t ev)
     }
 
     // SHORT press.
+    pb_policy_result_t r;
     switch (id) {
         case PB_BUTTON_ON:
-            button_toggle_mode(PB_MODE_POWER_ON);
-            pv_evlog_add("btn: on -> %s", pb_policy_mode_str(pb_policy_get_mode()));
+            r = button_toggle_mode(PB_MODE_POWER_ON);
+            if (r == PB_POLICY_OK) {
+                pv_evlog_add("btn: on -> %s",
+                             pb_policy_mode_str(pb_policy_get_mode()));
+            } else {
+                pv_evlog_add("btn: on rejected (%s)",
+                             pb_policy_result_str(r));
+            }
             break;
         case PB_BUTTON_AUTO:
-            button_toggle_mode(PB_MODE_AUTO);
-            pv_evlog_add("btn: auto -> %s", pb_policy_mode_str(pb_policy_get_mode()));
+            r = button_toggle_mode(PB_MODE_AUTO);
+            if (r == PB_POLICY_OK) {
+                pv_evlog_add("btn: auto -> %s",
+                             pb_policy_mode_str(pb_policy_get_mode()));
+            } else {
+                pv_evlog_add("btn: auto rejected (%s)",
+                             pb_policy_result_str(r));
+            }
             break;
         case PB_BUTTON_DRY:
-            button_toggle_mode(PB_MODE_DRYING);
-            pv_evlog_add("btn: dry -> %s", pb_policy_mode_str(pb_policy_get_mode()));
+            r = button_toggle_mode(PB_MODE_DRYING);
+            if (r == PB_POLICY_OK) {
+                pv_evlog_add("btn: dry -> %s",
+                             pb_policy_mode_str(pb_policy_get_mode()));
+            } else {
+                pv_evlog_add("btn: dry rejected (%s)",
+                             pb_policy_result_str(r));
+            }
             break;
         case PB_BUTTON_POWER:
             // Master OFF. Already-off is a deliberate no-op: log it but do not

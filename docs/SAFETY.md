@@ -38,6 +38,8 @@ mode to OFF. It is called **panic-off**, deliberately, and is **not** a
 safety-rated emergency stop — it is software running on the same MCU as the rest
 of the control loop, so a firmware fault could defeat it. The Layer-1 bonded
 cutoff and Layer-2 PTC physics remain the actual emergency layer.
+The panic-off latch is RAM-only and clears on reboot; reboot still starts with
+the SSR, mode, and target OFF, and never restores an active heat command.
 
 How it stays inside the safety model:
 - The button task never writes the SSR GPIO. `pb_policy_request_panic_off()`
