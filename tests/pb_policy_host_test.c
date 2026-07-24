@@ -121,8 +121,8 @@ static void count_wake(void) { wake_calls++; }
 
 static bool panic_logged_before_wake;
 static char last_evlog[128];
-void pv_evlog_init(void) {}
-void pv_evlog_add(const char *fmt, ...)
+void pb_evlog_init(void) {}
+void pb_evlog_add(const char *fmt, ...)
 {
     if (strstr(fmt, "panic-off") && wake_calls == 0)
         panic_logged_before_wake = true;

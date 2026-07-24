@@ -1,7 +1,7 @@
 idf_component_register(
     SRCS "pb_portal.c" "pb_dns.c"
     INCLUDE_DIRS "include"
-    REQUIRES esp_http_server pv_wifi pb_httpd nvs_flash esp_wifi lwip json
+    REQUIRES esp_http_server pb_wifi pb_httpd nvs_flash esp_wifi lwip json
 )
 
 # The STA-mode dashboard is a real source file (www/app.html) that we gzip at

@@ -76,9 +76,7 @@ Verify downloads first:  sha256sum -c SHA256SUMS.txt
 EOF
 
 # 4. provenance manifest (per-artifact SHA-256)
-OV_SHA="$(git -C external/OpenVent rev-parse HEAD 2>/dev/null || echo unknown)"
-OV_DESC="$(git -C external/OpenVent describe --tags --always 2>/dev/null || echo unknown)"
-export VERSION SOURCE_SHA IDF_VERSION TARGET BOARD BUILT_AT OV_SHA OV_DESC
+export VERSION SOURCE_SHA IDF_VERSION TARGET BOARD BUILT_AT
 python3 - "$OUT/$APP" "$OUT/$FACTORY" \
     "$BUILD_DIR/bootloader/bootloader.bin" \
     "$BUILD_DIR/partition_table/partition-table.bin" \
@@ -92,7 +90,7 @@ print(json.dumps({
     "source_sha":os.environ["SOURCE_SHA"],
     "idf_version":os.environ["IDF_VERSION"],
     "target":os.environ["TARGET"],"board":os.environ["BOARD"],
-    "openvent_submodule":{"sha":os.environ["OV_SHA"],"describe":os.environ["OV_DESC"]},
+    "vendored_core":{"source":"github.com/justinh-rahb/OpenVent","ref":"ec4691f (v0.3.0-4)","license":"MIT","components":["pb_evlog","pb_wifi","pb_moonraker"]},
     "built_at_utc":os.environ["BUILT_AT"],
     "note":"managed component versions in dependencies.lock (bundled)",
     "artifacts":arts,

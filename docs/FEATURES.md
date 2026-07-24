@@ -148,7 +148,7 @@ paths require a vendor cloud.
 ## Platform / release
 
 - ESP32-C3-MINI-1; shares the [OpenVent](https://github.com/justinh-rahb/OpenVent)
-  core (Wi-Fi, captive portal, Moonraker client) via a submodule.
+  core (Wi-Fi, captive portal, Moonraker client), vendored locally (see VENDORING.md).
 - **OTA with rollback** (bad image reverts on next boot).
 - **Reproducible CI releases** — tag `v*` → factory image, OTA image, install
   bundle, `manifest.json` (source SHA, ESP-IDF version, per-artifact SHA-256),

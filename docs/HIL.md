@@ -93,7 +93,7 @@ normal firmware build.
 
 On the build machine:
 
-- this repository and its submodules
+- this repository
 - ESP-IDF 5.3
 - Python from the ESP-IDF environment
 - `pyserial` for local serial I/O

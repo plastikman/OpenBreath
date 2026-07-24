@@ -1,14 +1,9 @@
 # DragonBreath — open firmware for the BIGTREETECH Panda Breath (ESP32-C3)
 cmake_minimum_required(VERSION 3.16)
-# Shared core from the OpenVent family (git submodule, pinned). These components
-# are made AVAILABLE here but are not yet linked — they build into the app only
-# once `main` (or another component) REQUIRES them. Verified drop-in / no Vent
-# coupling by dependency probe: pv_evlog, pv_wifi, pv_moonraker. (pv_portal is
-# NOT listed — it REQUIRES pv_motor/pv_policy and needs decoupling first.)
-set(EXTRA_COMPONENT_DIRS
-    external/OpenVent/firmware/components/pv_evlog
-    external/OpenVent/firmware/components/pv_wifi
-    external/OpenVent/firmware/components/pv_moonraker)
+# The shared board-agnostic core (event log, Wi-Fi/provisioning, Moonraker client)
+# is now vendored locally as components/pb_evlog, pb_wifi, pb_moonraker — auto-
+# discovered from components/, so no EXTRA_COMPONENT_DIRS is needed. It derives from
+# the OpenVent family (justinh-rahb/OpenVent, MIT); see VENDORING.md for provenance.
 # App version stamped into the ESP app descriptor (esp_app_get_description()->version,
 # also shown in the web UI): the exact git tag when HEAD is tagged (releases), else
 # the short commit hash (PR / local builds), with "-dirty" if the tree is modified.

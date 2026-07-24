@@ -4,7 +4,7 @@
 #include "pb_ntc.h"
 #include "pb_leds.h"
 #include "pb_policy.h"
-#include "pv_evlog.h"
+#include "pb_evlog.h"
 
 #include "esp_http_server.h"
 #include "esp_log.h"
@@ -984,16 +984,16 @@ static esp_err_t factory_reset_post(httpd_req_t *req)
     return ESP_OK;
 }
 
-// GET /api/v2/logs — read-only (open, like /state). Snapshots the pv_evlog ring
+// GET /api/v2/logs — read-only (open, like /state). Snapshots the pb_evlog ring
 // (newest first) as JSON. Never energizes the heater or feeds the watchdog.
 static esp_err_t logs_get(httpd_req_t *req)
 {
-    pv_evlog_entry_t *entries = calloc(PV_EVLOG_MAX_ENTRIES, sizeof *entries);
+    pb_evlog_entry_t *entries = calloc(PB_EVLOG_MAX_ENTRIES, sizeof *entries);
     if (!entries) {
         httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "oom");
         return ESP_FAIL;
     }
-    size_t n = pv_evlog_snapshot(entries, PV_EVLOG_MAX_ENTRIES);
+    size_t n = pb_evlog_snapshot(entries, PB_EVLOG_MAX_ENTRIES);
     cJSON *o = cJSON_CreateObject();
     if (!o) { free(entries); httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "oom"); return ESP_FAIL; }
     cJSON_AddNumberToObject(o, "api_version", API_VERSION);
