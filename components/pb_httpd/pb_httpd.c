@@ -20,6 +20,8 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "mbedtls/sha256.h"
+#include "lwip/sockets.h"   // recv(), MSG_DONTWAIT/MSG_PEEK for SSE FIN detection
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -539,9 +541,22 @@ static esp_err_t sse_send(
 static void sse_task(void *arg)
 {
     httpd_req_t *req = arg;
+    int sockfd = httpd_req_to_sockfd(req);
     uint32_t last_revision = UINT32_MAX;
     int64_t last_telemetry_us = 0;
     for (;;) {
+        // Detect a client that closed the stream (FIN) or reset it, so the SSE
+        // slot is freed promptly instead of waiting for a telemetry send to fail.
+        // A live client never sends on this stream, so MSG_PEEK is non-destructive:
+        // 0 = peer closed, <0 with a real error = reset, EWOULDBLOCK = still alive.
+        // (Keepalive, set on the httpd socket, backstops a peer that vanishes with
+        // no FIN by erroring the socket after ~25 s of unacked traffic.)
+        if (sockfd >= 0) {
+            char probe;
+            int pk = recv(sockfd, &probe, 1, MSG_DONTWAIT | MSG_PEEK);
+            if (pk == 0 || (pk < 0 && errno != EWOULDBLOCK && errno != EAGAIN))
+                break;
+        }
         pb_policy_snapshot_t snap;
         pb_policy_get_snapshot(&snap);
         int64_t now = esp_timer_get_time();
@@ -1039,6 +1054,19 @@ esp_err_t pb_httpd_start(void)
     // app descriptor on-stack, which overflows the 4 KB default httpd task stack
     // (stack-protection panic). Give it headroom.
     cfg.stack_size = 8192;
+    // TCP keepalive on every accepted socket. The SSE stream (GET /api/v2/events,
+    // capped at SSE_MAX_CLIENTS) only frees its client slot when a send fails; a
+    // peer that vanishes without a clean FIN/RST (tab killed, Wi-Fi blip, or a
+    // Moonraker-link flap churning the network) otherwise holds its slot for
+    // MINUTES while writes succeed into the TCP buffer, so after a couple of leaks
+    // every SSE gets 503 and the live UI silently stops updating. Keepalive tracks
+    // time since the last *received* segment, so a dead peer (no ACKs) is detected
+    // even while we keep streaming telemetry: ~idle + interval*count ≈ 25 s, after
+    // which the socket errors, the send fails, and the slot is reclaimed.
+    cfg.keep_alive_enable   = true;
+    cfg.keep_alive_idle     = 10;   // s idle (no rx) before the first probe
+    cfg.keep_alive_interval = 5;    // s between probes
+    cfg.keep_alive_count    = 3;    // probes before the socket is declared dead
     esp_err_t err = httpd_start(&s_server, &cfg);
     if (err != ESP_OK) return err;
 
