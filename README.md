@@ -1,8 +1,8 @@
 # DragonBreath
 
 Open firmware for the **BIGTREETECH Panda Breath** chamber heater (ESP32-C3),
-replacing the stock cloud integration with **Moonraker/Klipper** (and Home
-Assistant) control.
+replacing the stock cloud integration with **Moonraker/Klipper** and local web
+control.
 
 Sibling to [OpenVent](https://github.com/justinh-rahb/OpenVent) — part of an
 open-firmware **family for the BTT Panda line** that shares a common core.
@@ -20,7 +20,8 @@ re-implemented.
 
 **Docs:** full feature set → [`docs/FEATURES.md`](docs/FEATURES.md) · control API →
 [`docs/api-v2.md`](docs/api-v2.md) · safety model → [`docs/SAFETY.md`](docs/SAFETY.md) ·
-hardware → [`docs/HARDWARE.md`](docs/HARDWARE.md).
+OEM parity → [`docs/OEM_PARITY.md`](docs/OEM_PARITY.md) · hardware →
+[`docs/HARDWARE.md`](docs/HARDWARE.md).
 
 ## Status
 | Component | State |

@@ -4,6 +4,9 @@ Current as of **v0.3.0**. Open ESP-IDF firmware for the BIGTREETECH Panda Breath
 (ESP32-C3) chamber heater, replacing the stock cloud integration with
 Moonraker/Klipper + local web control.
 
+See [`OEM_PARITY.md`](OEM_PARITY.md) for the explicit implemented/planned/
+intentionally-changed feature matrix.
+
 ## Control modes
 
 The device runs an authoritative on-device state machine (`pb_policy`) — the

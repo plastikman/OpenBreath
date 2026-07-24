@@ -1,9 +1,9 @@
-# OpenBreath — Iteration 2: Stock-Panda parity + configurability
+# DragonBreath — Iteration 2: Stock-Panda parity + configurability
 
 ## Context
 The Iteration 1 foundation is operational and hardware-validated: heater and fan
 control, sensor monitoring, captive provisioning, dashboard/API, web OTA, and
-Klipper/Fluidd integration via openbreath-klipper. Iteration 2 adds stock-parity
+Klipper/Fluidd integration via dragonbreath-klipper. Iteration 2 adds stock-parity
 behavior while also closing remaining safety, state-synchronization, testing,
 and release-engineering gaps. The alpha API and UI are not frozen and may
 change incompatibly before beta.
@@ -20,11 +20,14 @@ Decisions locked with the user: **phased plan**, **all four buttons usable**
 > **Status (2026-07-23):** Phase 0 ✅ (v0.2.0) · Phase A ✅ (v0.3.0) · Phase B ✅ shipped
 > in v0.3.0 & hardware-validated — **except B2** (thermal-purge + NVS-persisted fault
 > latch), deferred · Phase C ⬜ not started (buttons — all 4 pins mapped, ready to build) · Phase D 🟡 partial (v2 dashboard
-> covers D2/D3; D1 shell + D4 parity matrix open) · Phase E 🟡 partial (release/build CI +
+> covers D2/D3; D4 parity matrix documented; D1 shell open) · Phase E 🟡 partial (release/build CI +
 > host tests; broader static-analysis/sim/dev-board target open). **Next candidates:** B2
 > safety hardening, Phase C button, or Phase D1/D4 dashboard polish.
 
-Not covered / explicitly out of scope: stock OEM WebSocket protocol + web UI, Bambu binding, K1/K2 buttons, the stock `filtertemp`/`heater_temp` auto params (OpenBreath has no filter sensor; the PTC/chamber cutoffs already bound element temp).
+Not covered / explicitly out of scope: stock OEM WebSocket protocol + web UI,
+Bambu binding, and the stock `filtertemp`/`heater_temp` auto parameters
+(DragonBreath has no filter sensor; the PTC/chamber cutoffs already bound element
+temperature).
 
 ## Phase 0 — Product identity + release correctness
 
@@ -69,7 +72,7 @@ All under `external/OpenVent/firmware/components/` (present via `EXTRA_COMPONENT
 - `pv_status_led/` — own task, OFF/SOLID/BLINK, active-high → template for **pb_leds**.
 - `pv_button/` — 10 ms poll, 20 ms debounce, short/long-press, single callback → template for **pb_buttons**.
 - `pv_policy.c` — NVS centi-degree-in-u32 float storage, `load_persisted()`, validating setters under a lock → template for **settings + mode params**.
-- `pv_evlog/` — 64-entry event ring (unused in OpenBreath) → button/mode/fault events.
+- `pv_evlog/` — 64-entry event ring (unused in DragonBreath) → button/mode/fault events.
 Port to `pb_board.h` pins; these reference OpenVent GPIOs, so they are code templates, not drop-ins.
 
 ## Component/registration pattern (every phase)
@@ -236,13 +239,13 @@ restores its inhibited state, never its prior target.
 local mode is unbounded (AUTO is bounded by live Moonraker state, DRYING by its
 timer).
 
-**B9. Observers.** Dashboard and openbreath-klipper consume the canonical
+**B9. Observers.** Dashboard and dragonbreath-klipper consume the canonical
 snapshot/event stream, including mode, drying countdown, revision, source,
 lease, and inhibit state. A physical or safety action must appear promptly in
 both and invalidate any stale local ownership.
 
 **Files:** `pb_policy.{c,h}` + CMake (+`esp_timer`,`nvs_flash`),
-`main/app_main.c`, `pb_httpd.{c,h}`, `pb_portal.c`, and openbreath-klipper's
+`main/app_main.c`, `pb_httpd.{c,h}`, `pb_portal.c`, and dragonbreath-klipper's
 transport/state adapter.
 
 ---
@@ -301,7 +304,7 @@ already probed 2026-07-23):**
 > mode / drying / OFF / fault-reset controls with success/rejection/stale-ownership
 > feedback; setup + OTA on secondary pages) are largely covered by the SSE-driven cards.
 > **Open:** **D1** (reusable component shell + clean narrow-iframe fit — still the single
-> utility page) and **D4** (explicit OEM parity matrix).
+> utility page). **D4** is documented in [`docs/OEM_PARITY.md`](../docs/OEM_PARITY.md).
 
 **D1. Dashboard shell.** Replace the growing utility page with reusable
 components that remain usable standalone and fit a narrow Fluidd/Mainsail
@@ -316,9 +319,9 @@ fault-reset controls. Show command success, rejection, stale ownership,
 connection loss, and external button/safety actions. Keep setup and OTA on
 secondary pages.
 
-**D4. Parity matrix.** Track every OEM feature as implemented, planned,
-intentionally changed, intentionally omitted, or unverified. The current
-exclusions remain explicit. Fan-only filtration is a possible OpenBreath
+**D4. Parity matrix.** ✅ [`docs/OEM_PARITY.md`](../docs/OEM_PARITY.md) tracks
+every OEM feature as implemented, planned, intentionally changed, intentionally
+omitted, or unverified. Fan-only filtration remains a possible DragonBreath
 enhancement, not required parity until OEM behavior confirms it.
 
 ---
@@ -371,7 +374,7 @@ pre-release qualification gate.
 Update `README.md` status table + `docs/SAFETY.md`: the configurable target cap
 (bounded by the validated 70 °C production ceiling; 85/105 fixed), the
 boot-OFF/no-resume deviation from stock, persistent-fault and thermal-purge
-behavior, the mode set, API/lease semantics, K3 button semantics, and LED
+behavior, the mode set, API/lease semantics, all four button semantics, and LED
 meanings. Clearly distinguish first install, OTA update, and stock restore;
 state the tested board revisions and known limitations. Maintain a changelog and
 generate release posts from a repeatable template rather than ad hoc prose.
@@ -386,13 +389,13 @@ product-neutral ESP-IDF component containing:
 - Common API state/command/event structures and authentication hooks.
 - OTA/rollback, event logging, and a responsive UI shell/component library.
 
-OpenVent and OpenBreath retain branding, GPIO/board maps, sensors/actuators,
+OpenVent and DragonBreath retain branding, GPIO/board maps, sensors/actuators,
 safety policy, product modes/thresholds, and button mappings. Both consumers pin
 a core revision and build it in CI.
 
 ## Verification (end-to-end, per phase)
-Build: `cd ~/git/OpenBreath && idf.py build`; flash `idf.py -p /dev/ttyUSB0 flash`. Device on the bench at `10.168.2.53`.
-- **0:** all product-visible names are OpenBreath; a tagged CI release produces a complete install bundle + OTA image with a manifest whose hashes match the downloaded files.
+Build: `cd ~/git/DragonBreath && idf.py build`; flash `idf.py -p /dev/ttyUSB0 flash`. Device on the bench at `10.168.2.53`.
+- **0:** all product-visible names are DragonBreath; a tagged CI release produces a complete install bundle + OTA image with a manifest whose hashes match the downloaded files.
 - **A:** `max=90` → clamps to 70; `comms_ms=5000` → clamps to 10000; `comms_ms=3600000` → clamps to 300000; lower `max` below an armed target → target pulled down; dashboard input `max` tracks state; force a fault → K1 blinks; over-temp cutoffs unchanged.
 - **B:** each mode drives the target; AUTO engages at the bed threshold and fails to 0 when Moonraker drops; drying counts down, auto-offs, and hard-caps at 12 h; reboot → OFF (no resume); 40 °C purge keeps the fan running after target OFF; fault → power-cycle restores inhibited/fan-ON state; stale lease/reconnect cannot restore heat; over-temp still trips; `M141 S45` still heats (= POWER_ON). Verify through the versioned state/command/event API.
 - **C:** the bench checklist above.
@@ -407,7 +410,7 @@ traceable to the tagged source.
 1. Phase 0: identity and release correctness. ✅ **Done — v0.2.0** (PRs #3, #4, #7).
 2. Phase A: bounded settings and verified LEDs.
 3. Phase B: authoritative state/API, modes, leases, thermal purge, and persistent faults.
-4. Phase C: K3-only physical control.
+4. Phase C: all-four-button physical control.
 5. Phase D: responsive dashboard and remaining intentional parity.
 6. Phase E: complete CI, simulation, dev-board HIL, and real-device qualification.
 7. Extract/version the shared core after the state/API seams stabilize.
