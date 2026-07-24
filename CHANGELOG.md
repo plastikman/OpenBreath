@@ -7,6 +7,28 @@ below into the GitHub Release notes.
 
 ## [Unreleased]
 
+## [0.5.2] - 2026-07-24
+
+### Fixed
+- **Live UI could silently stop updating (SSE slot leak).** The device caps
+  concurrent SSE event streams at 2, but a client that disconnected without a
+  clean close (tab killed, Wi-Fi blip, or a Moonraker-link flap churning the
+  network) held its slot for *minutes* — so after a couple of such drops every new
+  stream got `503` and the dashboard/Klipper live view froze even though the device
+  itself was fine and responsive. TCP keepalive is now enabled on the HTTP server
+  so a vanished peer is detected in ~25 s, and the SSE task additionally checks for
+  a peer FIN/RST every loop and frees the slot immediately (~0.3 s on the bench).
+  Normal (non-SSE) request latency was already healthy (~20 ms) and is unchanged.
+- **Dashboard shows fan and controller status again (regression from v0.5.0).**
+  The rewritten dashboard dropped the old at-a-glance detail, so you could no
+  longer tell what the fan was doing or who was in control. The System status card
+  now shows **Fan** (off, or on with the reason — heating / cooldown purge /
+  manual / safety airflow — and %), **Controller** (command source + lease owner),
+  **Auto** (engaged or waiting, with the bed threshold, when armed), **Drying**
+  (time remaining, when active), **Printer** (Moonraker link + bed temperature),
+  and **Fault**. All of it comes from the existing SSE `/api/v2/state` stream — no
+  API or firmware-behavior change.
+
 ## [0.5.1] - 2026-07-24
 
 ### Fixed
